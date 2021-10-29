@@ -1,0 +1,12 @@
+[package]
+name = "o-o"
+version = "0.1.0"
+edition = "2021"
+authors = ["Toshihiro Kamiya <kamiya@mbj.nifty.com>"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+subprocess = "0.2"
+tempfile = "3"
+anyhow = "1.0"
