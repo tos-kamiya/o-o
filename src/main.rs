@@ -7,7 +7,7 @@ use anyhow::Result;
 use subprocess::{Exec, ExitStatus, Redirection};
 use tempfile::{tempdir, TempDir};
 
-use o_o::zgclp::{arg_parse, Arg};
+use zgclp::{arg_parse, Arg};
 
 fn split_append_flag(file_name: &str) -> (&str, bool) {
     if file_name.starts_with("+") {

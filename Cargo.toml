@@ -10,3 +10,4 @@ authors = ["Toshihiro Kamiya <kamiya@mbj.nifty.com>"]
 subprocess = "0.2"
 tempfile = "3"
 anyhow = "1.0"
+zgclp = "0.1"
