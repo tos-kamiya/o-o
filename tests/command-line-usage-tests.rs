@@ -141,13 +141,13 @@ mod test {
         let temp_dir = tempdir()?;
 
         let out_file = temp_dir.path().join("out.txt");
+        let append_out_file = format!("+{}", SU(&out_file));
 
         let status1 = Command::new("./target/debug/o-o").args(
-            ["-d", SU(&temp_dir.path()), "-", SU(&out_file), "-", "echo", "1st line"])
+            ["-d", SU(&temp_dir.path()), "-", &append_out_file, "-", "echo", "1st line"])
             .status()?;
         assert!(status1.code().unwrap() == 0);
         
-        let append_out_file = format!("+{}", SU(&out_file));
         let status2 = Command::new("./target/debug/o-o").args(
             ["-d", SU(&temp_dir.path()), "-", &append_out_file, "-", "echo", "2ne line"])
             .status()?;

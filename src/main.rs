@@ -20,7 +20,7 @@ fn split_append_flag(file_name: &str) -> (&str, bool) {
 fn open_for_writing(file_name: &str) -> std::io::Result<File> {
     let (f, a) = split_append_flag(file_name);
     if a {
-        OpenOptions::new().append(true).open(f)
+        OpenOptions::new().create(true).append(true).open(f)
     } else {
         File::create(f)
     }
@@ -48,7 +48,7 @@ const STDOUT_TEMP: &str = "STDOUT_TEMP";
 const USAGE: &str = "Redirect subprocess's standard i/o's.
 
 Usage:
-  o-o [options] <stdin> (-a <stdout>|<stdout>) (-a <stderr>|<stderr>) [--] <commandline>...
+  o-o [options] <stdin> <stdout> <stderr> [--] <commandline>...
   o-o --help
   o-o --version
 
@@ -56,10 +56,45 @@ Options:
   <stdin>       File served as the standard input. `-` for no redirection.
   <stdout>      File served as the standard output. `-` for no redirection. `=` for the same file as the standard input.
   <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output.
+                Adding `+` before a file name means appending to the file (like `>>` in redirects).
   -e VAR=VALUE      Environment variables.
   --force-overwrite, -F             Overwrite the file even when exit status != 0. Valid only when <stdout> is `=`.
   --working-directory=DIR, -d DIR   Working directory.
 ";
+
+fn do_validate_fds<'a>(fds: &'a Vec::<&'a str>, force_overwrite: bool) -> std::result::Result<(), &str> {
+    if fds.len() < 3 {
+        return Err("required three arguments: stdin, stdout and stderr.");
+    }
+
+    for i in 0..fds.len() {
+        if fds[i] == "+-" || fds[i] == "+=" {
+            return Err("not possible to use `-` or `=` in combination with `+`.");
+        }
+        if fds[i] != "-" && fds[i] != "=" {
+            for j in i + 1 .. fds.len() {
+                if split_append_flag(fds[j]).0 == split_append_flag(fds[i]).0 {
+                    return Err("explicitly use `=` when dealing with the same file.");
+                }
+            }
+        }
+    }
+
+    if force_overwrite {
+        if fds[0] == "-" {
+            return Err("option --force-overwrite requires a real file name.");
+        }
+        if fds[1] != "=" {
+            return Err("option --force-overwrite is only valid when <stdout> is `=`.");
+        }
+    }
+
+    if fds[0] == "=" {
+        return Err("can not specify `=` as stdin.");
+    }
+
+    Ok(())
+}
 
 fn main() -> Result<()> {
     // Parse command-line arguments
@@ -130,29 +165,17 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Validate arguments
-    if fds.len() < 3 {
-        eprintln!("{}", "Error: required three arguments: stdin, stdout and stderr.");
-        std::process::exit(1);
-    }
+    // Validate command-line arguments
     if command_line.is_empty() {
         eprintln!("{}", "Error: no command line specified.");
         std::process::exit(1);
     }
-    if force_overwrite {
-        if fds[0] == "-" {
-            eprintln!("{}", "Error: option --force-overwrite requires a real file name.");
-            std::process::exit(1);
-        }
-        if fds[1] != "=" {
-            eprintln!("{}", "Error: option --force-overwrite is only valid when <stdout> is `=`.");
-            std::process::exit(1);
-        }
-    }
-    if fds[0] == "=" {
-        eprintln!("{}", "Error: can not specify `=` as stdin.");
+
+    if let Err(message) = do_validate_fds(&fds, force_overwrite) {
+        eprintln!("Error: {}", message);
         std::process::exit(1);
     }
+
     if fds[0] == "-" && fds[1] == "=" {
         fds[1] = "-";
     }
@@ -221,4 +244,55 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+
+mod test {
+    use super::*;
+
+    #[test]
+    fn missing_fds() {
+        let fds: Vec<&str> = vec!["a", "b"];
+        assert!(do_validate_fds(&fds, false).is_err());
+    }
+
+    #[test]
+    fn invalid_usage_of_plus() {
+        let fds: Vec<&str> = vec!["a", "b", "+="];
+        assert!(do_validate_fds(&fds, false).is_err());
+
+        let fds: Vec<&str> = vec!["a", "b", "+-"];
+        assert!(do_validate_fds(&fds, false).is_err());
+    }
+
+    #[test]
+    fn invalid_usage_of_equal() {
+        let fds: Vec<&str> = vec!["=", "b", "c"];
+        assert!(do_validate_fds(&fds, false).is_err());
+    }
+
+    #[test]
+    fn same_file_names() {
+        let fds: Vec<&str> = vec!["a", "a", "b"];
+        assert!(do_validate_fds(&fds, false).is_err());
+
+        let fds: Vec<&str> = vec!["a", "b", "a"];
+        assert!(do_validate_fds(&fds, false).is_err());
+
+        let fds: Vec<&str> = vec!["a", "b", "b"];
+        assert!(do_validate_fds(&fds, false).is_err());
+    }
+
+    #[test]
+    fn force_overwrite() {
+        let fds: Vec<&str> = vec!["a", "b", "c"];
+        assert!(do_validate_fds(&fds, true).is_err());
+
+        let fds: Vec<&str> = vec!["a", "=", "c"];
+        assert!(do_validate_fds(&fds, true).is_ok());
+
+        let fds: Vec<&str> = vec!["-", "=", "c"];
+        assert!(do_validate_fds(&fds, true).is_err());
+    }
 }
