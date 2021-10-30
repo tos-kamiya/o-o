@@ -58,3 +58,8 @@ To uninstall, remove the file `o-o`.
 ## License
 
 Unlicense (Public Domain).
+
+## Todos
+
+- [x] Reimplemented in Rust
+- [ ] Testing `--force-overwrite`.
