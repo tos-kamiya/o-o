@@ -109,7 +109,7 @@ fn main() -> Result<()> {
     let argv: Vec<&str> = argv0.iter().map(AsRef::as_ref).collect();
     let mut ai = 1;
     while ai < argv.len() && fds.len() < 3 {
-        ai += match arg_parse(&argv, ai) {
+        let eat = match arg_parse(&argv, ai) {
             (Arg::Option("-h"), Some(_eat), _) => {
                 print!("{}", USAGE);
                 std::process::exit(0);
@@ -128,7 +128,7 @@ fn main() -> Result<()> {
             }
             (Arg::Option("-e"), _, Some((eat, value))) => {
                 let p = value.find("=").unwrap_or_else(|| {
-                    eprintln!("{}", "Error: option -e's argument should be `VAR=VALUE`.");
+                    eprintln!("{}", "Error: o-o: option -e's argument should be `VAR=VALUE`.");
                     std::process::exit(1);
                 });
                 envs.push((&value[.. p], &value[p + 1 ..]));
@@ -149,10 +149,11 @@ fn main() -> Result<()> {
                 eat
             }
             _ => {
-                eprintln!("Error: invalid option/argument: {}", argv[ai]);
+                eprintln!("Error: o-o: invalid option/argument: {}", argv[ai]);
                 std::process::exit(1);
             }
         };
+        ai += eat;
     }
     command_line.extend_from_slice(&argv[ai ..]);
 
@@ -167,12 +168,12 @@ fn main() -> Result<()> {
 
     // Validate command-line arguments
     if command_line.is_empty() {
-        eprintln!("{}", "Error: no command line specified.");
+        eprintln!("{}", "Error: o-o: no command line specified.");
         std::process::exit(1);
     }
 
     if let Err(message) = do_validate_fds(&fds, force_overwrite) {
-        eprintln!("Error: {}", message);
+        eprintln!("Error: o-o: {}", message);
         std::process::exit(1);
     }
 
@@ -192,7 +193,11 @@ fn main() -> Result<()> {
     }
 
     if fds[0] != "-" {
-        let f = File::open(split_append_flag(&fds[0]).0)?;
+        let fname = split_append_flag(&fds[0]).0;
+        let f = File::open(fname).unwrap_or_else(|_| {
+            eprintln!("Error: o-o: fail to open: {}", fname);
+            std::process::exit(1);
+        });
         sp = sp.stdin(f);
     }
 
@@ -235,7 +240,7 @@ fn main() -> Result<()> {
     }
 
     if ! success {
-        eprintln!("Error: {:?}", exit_status);
+        eprintln!("Error: o-o: {:?}", exit_status);
         if let ExitStatus::Exited(code) = exit_status {
             std::process::exit(code.try_into()?);
         } else {

@@ -39,7 +39,7 @@ checksum = "869d572136620d55835903746bcb5cdc54cb2851fd0aeec53220b4bb65ef3013"
 
 [[package]]
 name = "o-o"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "subprocess",
@@ -165,6 +165,6 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "zgclp"
-version = "0.1.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21337de8c24c65c873c2f49fda9b0847afc5063624a15ed3a767f77dce840c67"
+checksum = "60c5ec164b18dd0c7bee05dc778056307b58d4cebb320e204c2a764a60ab72d2"

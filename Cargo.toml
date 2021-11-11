@@ -1,6 +1,6 @@
 [package]
 name = "o-o"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Toshihiro Kamiya <kamiya@mbj.nifty.com>"]
 
@@ -10,4 +10,4 @@ authors = ["Toshihiro Kamiya <kamiya@mbj.nifty.com>"]
 subprocess = "0.2"
 tempfile = "3"
 anyhow = "1.0"
-zgclp = "0.1"
+zgclp = "0.3"
