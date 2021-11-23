@@ -11,8 +11,8 @@ use tempfile::{tempdir, TempDir};
 use zgclp::{arg_parse, Arg};
 
 fn split_append_flag(file_name: &str) -> (&str, bool) {
-    if file_name.starts_with("+") {
-        (&file_name[1..], true)
+    if let Some(stripped) = file_name.strip_prefix("+") {
+        (stripped, true)
     } else {
         (file_name, false)
     }
@@ -34,15 +34,15 @@ fn copy_to(mut src: File, mut dst: File) -> Result<()> {
             0 => { break; }
             n => {
                 let buf = &buf[..n];
-                dst.write(buf)?;
+                dst.write_all(buf)?;
             }
         }
     }
     Ok(())
 }
 
-const VERSION: &'static str = env!("CARGO_PKG_VERSION");
-const NAME: &'static str = env!("CARGO_PKG_NAME");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const NAME: &str = env!("CARGO_PKG_NAME");
 
 const STDOUT_TEMP: &str = "STDOUT_TEMP";
 
@@ -64,7 +64,7 @@ Options:
   --working-directory=DIR, -d DIR   Working directory.
 ";
 
-fn do_validate_fds<'a>(fds: &'a Vec::<&'a str>, force_overwrite: bool) -> std::result::Result<(), &str> {
+fn do_validate_fds<'a>(fds: &'a[&'a str], force_overwrite: bool) -> std::result::Result<(), &str> {
     if fds.len() < 3 {
         return Err("required three arguments: stdin, stdout and stderr.");
     }
@@ -254,7 +254,7 @@ fn main() -> Result<()> {
 
     let mut stderr_sink: Option<Rc<File>> = None;
     if fds[2] != "-" && fds[2] != "=" {
-        let f = open_for_writing(&fds[2])?;
+        let f = open_for_writing(fds[2])?;
         stderr_sink = Some(Rc::new(f));
     }
 
