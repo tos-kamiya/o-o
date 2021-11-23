@@ -198,7 +198,7 @@ mod test {
         assert!(output.status.code().unwrap() == 0);
 
         let output_contents = String::from_utf8(output.stdout).unwrap();
-        assert!(output_contents == "3\n");
+        assert!(output_contents.find("3\n").is_some());
 
         temp_dir.close()?;
         Ok(())
