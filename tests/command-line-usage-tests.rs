@@ -181,4 +181,28 @@ mod test {
         temp_dir.close()?;
         Ok(())
     }
+
+    #[test]
+    fn pipe_commands() -> Result<(), io::Error> {
+        const FILE_A: &str = "a.txt";
+
+        let temp_dir = tempdir()?;
+
+        let file_a = temp_dir.path().join(FILE_A);
+        let _ = fs::write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
+
+        let output = Command::new("./target/debug/o-o").args(
+            ["-d", SU(&temp_dir.path()), "-p", "P", SU(&file_a), "-", "-", "cat", SU(&file_a), "P", "tee"])
+            .output()?;
+
+        assert!(output.status.code().unwrap() == 0);
+
+        let output_contents = String::from_utf8(output.stdout).unwrap();
+        assert!(output_contents.find("1st line").is_some());
+        assert!(output_contents.find("2nd line").is_some());
+        assert!(output_contents.find("3rd line").is_some());
+
+        temp_dir.close()?;
+        Ok(())
+    }
 }

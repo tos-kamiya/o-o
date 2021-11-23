@@ -1,10 +1,11 @@
 use std::env;
 use std::fs;
+use std::rc::{Rc};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 
 use anyhow::Result;
-use subprocess::{Exec, ExitStatus, Redirection};
+use subprocess::{Exec, ExitStatus, Redirection, Pipeline};
 use tempfile::{tempdir, TempDir};
 
 use zgclp::{arg_parse, Arg};
@@ -57,7 +58,8 @@ Options:
   <stdout>      File served as the standard output. `-` for no redirection. `=` for the same file as the standard input.
   <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output.
                 Adding `+` before a file name means appending to the file (like `>>` in redirects).
-  -e VAR=VALUE      Environment variables.
+  -e VAR=VALUE                      Environment variables.
+  --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (that is, `|`).
   --force-overwrite, -F             Overwrite the file even when exit status != 0. Valid only when <stdout> is `=`.
   --working-directory=DIR, -d DIR   Working directory.
 ";
@@ -96,6 +98,55 @@ fn do_validate_fds<'a>(fds: &'a Vec::<&'a str>, force_overwrite: bool) -> std::r
     Ok(())
 }
 
+
+macro_rules! exec_it {
+    ( $sp:ident, $fds:expr, $force_overwrite:expr ) => (
+        {
+            if $fds[0] != "-" {
+                let fname = split_append_flag(&$fds[0]).0;
+                let f = File::open(fname).unwrap_or_else(|_| {
+                    eprintln!("Error: o-o: fail to open: {}", fname);
+                    std::process::exit(1);
+                });
+                $sp = $sp.stdin(f);
+            }
+
+            let mut temp_dir: Option<TempDir> = None;
+            if $fds[1] == "=" {
+                let dir = tempdir()?;
+                let f = File::create(dir.path().join(STDOUT_TEMP))?;
+                temp_dir = Some(dir);
+                $sp = $sp.stdout(f);
+            } else if $fds[1] != "-" {
+                let f = open_for_writing(&$fds[1])?;
+                $sp = $sp.stdout(f);
+            }
+
+            let exit_status = $sp.join()?;
+            let success = matches!(exit_status, ExitStatus::Exited(0));
+
+            if let Some(dir) = temp_dir {
+                let temp_file = dir.path().join(STDOUT_TEMP);
+                let (f, a) = split_append_flag(&$fds[0]);
+                if success || $force_overwrite {
+                    if a {
+                        let dst = open_for_writing(&$fds[0])?;
+                        let src = File::open(temp_file)?;
+                        copy_to(src, dst)?;
+                    } else {
+                        fs::rename(temp_file, f)?;
+                    }
+                } else if ! success {
+                    eprintln!("Warning: exit code != 0. Not overwrite the file: {}", f); 
+                }
+                dir.close()?;
+            }
+
+            exit_status
+        }
+    )
+}
+
 fn main() -> Result<()> {
     // Parse command-line arguments
     let mut fds = Vec::<&str>::new();
@@ -104,13 +155,14 @@ fn main() -> Result<()> {
     let mut envs = Vec::<(&str, &str)>::new();
     let mut working_directory: Option<&str> = None;
     let mut debug_info = false;
+    let mut pipe_str: Option<&str> = None;
 
     let argv0: Vec<String> = env::args().collect();
     let argv: Vec<&str> = argv0.iter().map(AsRef::as_ref).collect();
     let mut ai = 1;
     while ai < argv.len() && fds.len() < 3 {
         let eat = match arg_parse(&argv, ai) {
-            (Arg::Option("-h"), Some(_eat), _) => {
+            (Arg::Option("-h" | "--help"), Some(_eat), _) => {
                 print!("{}", USAGE);
                 std::process::exit(0);
             }
@@ -138,6 +190,10 @@ fn main() -> Result<()> {
                 working_directory = Some(value);
                 eat
             }
+            (Arg::Option("-p" | "--pipe"), _, Some((eat, value))) => {
+                pipe_str = Some(value);
+                eat
+            }
             (Arg::Separator(_), Some(eat), _) => {
                 while fds.len() < 3 {
                     fds.push("-");
@@ -157,12 +213,27 @@ fn main() -> Result<()> {
     }
     command_line.extend_from_slice(&argv[ai ..]);
 
+    let mut sub_command_lines = Vec::<&[&str]>::new();
+    if let Some(p) = pipe_str {
+        let mut i = 0;
+        for j in i..command_line.len() {
+            if command_line[j] == p && j > i {
+                sub_command_lines.push(&command_line[i..j]);
+                i = j + 1;
+            }
+        }
+    } else {
+        sub_command_lines.push(&command_line);
+    }
+
     if debug_info {
         println!("fds = {:?}", fds);
         println!("command_line = {:?}", command_line);
+        println!("sub_command_line = {:?}", sub_command_lines);
         println!("force_overwrite = {:?}", force_overwrite);
         println!("envs = {:?}", envs);
         println!("working_directory = {:?}", working_directory);
+        println!("pipe = {:?}", pipe_str);
         return Ok(());
     }
 
@@ -181,64 +252,38 @@ fn main() -> Result<()> {
         fds[1] = "-";
     }
 
-    // Invoke a sub-process
-    let mut sp = Exec::cmd(&command_line[0]).args(&command_line[1..]);
-
-    if ! envs.is_empty() {
-        sp = sp.env_extend(&envs);
-    }
-
-    if let Some(dir) = working_directory {
-        sp = sp.cwd(dir);
-    }
-
-    if fds[0] != "-" {
-        let fname = split_append_flag(&fds[0]).0;
-        let f = File::open(fname).unwrap_or_else(|_| {
-            eprintln!("Error: o-o: fail to open: {}", fname);
-            std::process::exit(1);
-        });
-        sp = sp.stdin(f);
-    }
-
-    let mut temp_dir: Option<TempDir> = None;
-    if fds[1] == "=" {
-        let dir = tempdir()?;
-        let f = File::create(dir.path().join(STDOUT_TEMP))?;
-        temp_dir = Some(dir);
-        sp = sp.stdout(f);
-    } else if fds[1] != "-" {
-        let f = open_for_writing(&fds[1])?;
-        sp = sp.stdout(f);
-    }
-
-    if fds[2] == "=" {
-        sp = sp.stderr(Redirection::Merge);
-    } else if fds[2] != "-" {
+    let mut stderr_sink: Option<Rc<File>> = None;
+    if fds[2] != "-" && fds[2] != "=" {
         let f = open_for_writing(&fds[2])?;
-        sp = sp.stderr(f);
+        stderr_sink = Some(Rc::new(f));
     }
 
-    let exit_status = sp.join()?;
-    let success = matches!(exit_status, ExitStatus::Exited(0));
-
-    if let Some(dir) = temp_dir {
-        let temp_file = dir.path().join(STDOUT_TEMP);
-        let (f, a) = split_append_flag(&fds[0]);
-        if success || force_overwrite {
-            if a {
-                let dst = open_for_writing(&fds[0])?;
-                let src = File::open(temp_file)?;
-                copy_to(src, dst)?;
-            } else {
-                fs::rename(temp_file, f)?;
-            }
-        } else if ! success {
-            eprintln!("Warning: exit code != 0. Not overwrite the file: {}", f); 
+    // Invoke a sub-process
+    let mut execs = sub_command_lines.iter().map(|&scl| { 
+        let mut exec = Exec::cmd(&scl[0]).args(&scl[1..]);
+        if ! envs.is_empty() {
+            exec = exec.env_extend(&envs);
         }
-        dir.close()?;
-    }
+        if let Some(dir) = working_directory {
+            exec = exec.cwd(dir);
+        }
+        if let Some(ss) = &stderr_sink {
+            exec = exec.stderr(Redirection::RcFile(ss.clone()));
+        } else if fds[2] == "=" {
+            exec = exec.stderr(Redirection::Merge);
+        }
+        exec
+    }).collect::<Vec<Exec>>();
 
+    let exit_status = if execs.len() >= 2 {
+        let mut sp = Pipeline::from_exec_iter(execs);
+        exec_it!(sp, fds, force_overwrite)
+    } else {
+        let mut sp = execs.pop().unwrap();
+        exec_it!(sp, fds, force_overwrite)
+    };
+
+    let success = matches!(exit_status, ExitStatus::Exited(0));
     if ! success {
         eprintln!("Error: o-o: {:?}", exit_status);
         if let ExitStatus::Exited(code) = exit_status {
