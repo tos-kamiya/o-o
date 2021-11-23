@@ -53,15 +53,15 @@ ls *.txt | xargs -I {} o-o - {}-head.out - head -3 {}
 
 ## インストール
 
-ビルドするには、`cargo build --release`としてください。実行ファイルに`target/release/o-o`が生成されます。
+Cargoコマンドによりインストールしてください。
 
-インストールするには、ファイル`o-o`をPATHが通ったディレクトリ（例えば`~/bin`）に置いてください。
-
-アンインストールするには、ファイル`o-o`を削除してください。
+```sh
+cargo install o-o
+```
 
 ## ライセンス
 
-Unlicense (Public Domain).
+MIT/Apache-2.0
 
 ## Todos
 

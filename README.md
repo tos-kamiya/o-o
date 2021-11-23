@@ -52,15 +52,15 @@ Options:
 
 ## Installation
 
-To build, use `cargo build --release`, which will create the executable `target/release/o-o`.
+Use the cargo command to install.
 
-To install, copy a file `o-o` in any directory on PATH, e.g. `~/bin`.
-
-To uninstall, remove the file `o-o`.
+```sh
+cargo install o-o
+```
 
 ## License
 
-Unlicense (Public Domain).
+MIT/Apache-2.0
 
 ## Todos
 
