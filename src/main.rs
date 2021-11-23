@@ -222,6 +222,9 @@ fn main() -> Result<()> {
                 i = j + 1;
             }
         }
+        if i < command_line.len() {
+            sub_command_lines.push(&command_line[i..]);
+        }
     } else {
         sub_command_lines.push(&command_line);
     }
