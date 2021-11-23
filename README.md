@@ -1,7 +1,7 @@
 o-o
 ===
 
-Extends the command line for commands that assume standard input/output to allow input/output to files.
+Enables commands that assume the standard input and output to read and write to files specified in the command line.
 
 ## What? Why?
 

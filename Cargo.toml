@@ -1,8 +1,14 @@
 [package]
 name = "o-o"
+description = "EEnables commands that assume the standard input and output to read and write to files specified in the command line."
 version = "0.2.0"
 edition = "2021"
 authors = ["Toshihiro Kamiya <kamiya@mbj.nifty.com>"]
+license = "MIT/Apache-2.0"
+homepage = "https://github.com/tos-kamiya/o-o"
+keywords = ["cli", "utility"]
+category = ["command-line-utilities"]
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
