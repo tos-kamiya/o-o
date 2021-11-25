@@ -203,4 +203,56 @@ mod test {
         temp_dir.close()?;
         Ok(())
     }
+
+    #[test]
+    fn process_which_fails() -> Result<(), io::Error> {
+        const SCRIPT_ECHO_AND_FAIL: &str = "echo_and_fail.sh";
+        const FILE_A: &str = "a.txt";
+
+        let temp_dir = tempdir()?;
+
+        let script_echo_and_fail = temp_dir.path().join(SCRIPT_ECHO_AND_FAIL);
+        let _ = fs::write(SU(&script_echo_and_fail), "#!/bin/bash\n\necho \"echo and fail!\"\nexit 12\n")?;
+
+        let file_a = temp_dir.path().join(FILE_A);
+        let _ = fs::write(SU(&file_a), "file a original contents\n")?;
+
+        let status = Command::new("./target/debug/o-o").args(
+            ["-d", SU(&temp_dir.path()), SU(&file_a), "=", "-", "bash", SU(&script_echo_and_fail)])
+            .status()?;
+        assert!(status.code().unwrap() == 12);
+        
+        let file_a_contents = fs::read_to_string(SU(&file_a))?;
+        assert!(file_a_contents.find("original contents").is_some());
+        assert!(! file_a_contents.find("echo and fail!").is_some());
+
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn overwrite_with_process_which_fails() -> Result<(), io::Error> {
+        const SCRIPT_ECHO_AND_FAIL: &str = "echo_and_fail.sh";
+        const FILE_A: &str = "a.txt";
+
+        let temp_dir = tempdir()?;
+
+        let script_echo_and_fail = temp_dir.path().join(SCRIPT_ECHO_AND_FAIL);
+        let _ = fs::write(SU(&script_echo_and_fail), "#!/bin/bash\n\necho \"echo and fail!\"\nexit 12\n")?;
+
+        let file_a = temp_dir.path().join(FILE_A);
+        let _ = fs::write(SU(&file_a), "file a original contents\n")?;
+
+        let status = Command::new("./target/debug/o-o").args(
+            ["-F", "-d", SU(&temp_dir.path()), SU(&file_a), "=", "-", "bash", SU(&script_echo_and_fail)])
+            .status()?;
+        assert!(status.code().unwrap() == 12);
+        
+        let file_a_contents = fs::read_to_string(SU(&file_a))?;
+        assert!(! file_a_contents.find("original contents").is_some());
+        assert!(file_a_contents.find("echo and fail!").is_some());
+
+        temp_dir.close()?;
+        Ok(())
+    }
 }

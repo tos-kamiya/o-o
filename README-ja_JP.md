@@ -66,4 +66,4 @@ MIT/Apache-2.0
 ## Todos
 
 - [x] Rustで再実装
-- [ ] `--force-overwrite`のテスト
+- [x] `--force-overwrite`のテスト

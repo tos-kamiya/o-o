@@ -65,4 +65,4 @@ MIT/Apache-2.0
 ## Todos
 
 - [x] Reimplemented in Rust
-- [ ] Testing `--force-overwrite`.
+- [x] Testing `--force-overwrite`.
