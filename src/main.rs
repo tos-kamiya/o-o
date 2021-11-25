@@ -57,7 +57,7 @@ Options:
   <stdin>       File served as the standard input. `-` for no redirection.
   <stdout>      File served as the standard output. `-` for no redirection. `=` for the same file as the standard input.
   <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output.
-                Adding `+` before a file name means appending to the file (like `>>` in redirects).
+                Prefixing the file name with `+` will append to the file (same as `>>`).
   -e VAR=VALUE                      Environment variables.
   --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (that is, `|`).
   --force-overwrite, -F             Overwrite the file even when exit status != 0. Valid only when <stdout> is `=`.
