@@ -32,7 +32,7 @@ The `o-o` arguments are the standard input, standard output, and standard error 
 If you specify `-` as the file name for standard input, etc., it will not be redirected. Putting `+` in front of a file name will open the file in append mode.
 
 ```
-Redirect subprocess's standard i/o's.
+Start a sub-process and redirect its standard I/O's.
 
 Usage:
   o-o [options] <stdin> <stdout> <stderr> [--] <commandline>...
@@ -41,8 +41,8 @@ Usage:
 
 Options:
   <stdin>       File served as the standard input. `-` for no redirection.
-  <stdout>      File served as the standard output. `-` for no redirection. `=` for the same file as the standard input.
-  <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output.
+  <stdout>      File served as the standard output. `-` for no redirection. `=` for the same file as the standard input. `.` for /dev/null.
+  <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output. `.` for /dev/null.
                 Prefixing the file name with `+` will append to the file (same as `>>`).
   -e VAR=VALUE                      Environment variables.
   --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (that is, `|`).
@@ -66,3 +66,4 @@ MIT/Apache-2.0
 
 - [x] Reimplemented in Rust
 - [x] Testing `--force-overwrite`
+- [x] Enable handling of /dev/null

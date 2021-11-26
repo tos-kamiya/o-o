@@ -277,4 +277,40 @@ mod test {
         temp_dir.close()?;
         Ok(())
     }
+
+    #[test]
+    fn stdout_devnull() -> Result<(), io::Error> {
+        let temp_dir = tempdir()?;
+
+        let output = Command::new("./target/debug/o-o").args(
+            ["-d", SU(&temp_dir.path()), "-", ".", "-", "echo", "hello"])
+            .output()?;
+
+        assert!(output.status.code().unwrap() == 0);
+
+        let output_contents = String::from_utf8(output.stdout).unwrap();
+        assert!(! output_contents.find("hello").is_some());
+
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn stderr_devnull() -> Result<(), io::Error> {
+        const SCRIPT: &str = "a_script.sh";
+
+        let temp_dir = tempdir()?;
+
+        let script = temp_dir.path().join(SCRIPT);
+        let _ = fs::write(SU(&script), "echo !!If you see this message, the test \"stderr_devnull\" failed.!! >&2\n")?;
+
+        let output = Command::new("./target/debug/o-o").args(
+            ["-d", SU(&temp_dir.path()), "-", "-", ".", "bash", SU(&script)])
+            .output()?;
+
+        assert!(output.status.code().unwrap() == 0);
+
+        temp_dir.close()?;
+        Ok(())
+    }
 }

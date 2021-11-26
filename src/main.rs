@@ -5,7 +5,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 
 use anyhow::Result;
-use subprocess::{Exec, ExitStatus, Redirection, Pipeline};
+use subprocess::{Exec, ExitStatus, NullFile, Redirection, Pipeline};
 use tempfile::{tempdir, TempDir};
 
 use zgclp::{arg_parse, Arg};
@@ -46,7 +46,7 @@ const NAME: &str = env!("CARGO_PKG_NAME");
 
 const STDOUT_TEMP: &str = "STDOUT_TEMP";
 
-const USAGE: &str = "Redirect subprocess's standard i/o's.
+const USAGE: &str = "Start a sub-process and redirect its standard I/O's.
 
 Usage:
   o-o [options] <stdin> <stdout> <stderr> [--] <commandline>...
@@ -55,8 +55,8 @@ Usage:
 
 Options:
   <stdin>       File served as the standard input. `-` for no redirection.
-  <stdout>      File served as the standard output. `-` for no redirection. `=` for the same file as the standard input.
-  <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output.
+  <stdout>      File served as the standard output. `-` for no redirection. `=` for the same file as the standard input. `.` for /dev/null.
+  <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output. `.` for /dev/null.
                 Prefixing the file name with `+` will append to the file (same as `>>`).
   -e VAR=VALUE                      Environment variables.
   --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (that is, `|`).
@@ -91,13 +91,12 @@ fn do_validate_fds<'a>(fds: &'a[&'a str], force_overwrite: bool) -> std::result:
         }
     }
 
-    if fds[0] == "=" {
-        return Err("can not specify `=` as stdin.");
+    if fds[0] == "=" || fds[0] == "." {
+        return Err("can not specify either `=` or `.` as stdin.");
     }
 
     Ok(())
 }
-
 
 macro_rules! exec_it {
     ( $sp:ident, $fds:expr, $force_overwrite:expr ) => (
@@ -117,6 +116,8 @@ macro_rules! exec_it {
                 let f = File::create(dir.path().join(STDOUT_TEMP))?;
                 temp_dir = Some(dir);
                 $sp = $sp.stdout(f);
+            } else if $fds[1] == "." {
+                $sp = $sp.stdout(NullFile);
             } else if $fds[1] != "-" {
                 let f = open_for_writing(&$fds[1])?;
                 $sp = $sp.stdout(f);
@@ -256,7 +257,7 @@ fn main() -> Result<()> {
     }
 
     let mut stderr_sink: Option<Rc<File>> = None;
-    if fds[2] != "-" && fds[2] != "=" {
+    if fds[2] != "-" && fds[2] != "=" && fds[2] != "." {
         let f = open_for_writing(fds[2])?;
         stderr_sink = Some(Rc::new(f));
     }
@@ -274,6 +275,8 @@ fn main() -> Result<()> {
             exec = exec.stderr(Redirection::RcFile(ss.clone()));
         } else if fds[2] == "=" {
             exec = exec.stderr(Redirection::Merge);
+        } else if fds[2] == "." {
+            exec = exec.stderr(NullFile);
         }
         exec
     }).collect::<Vec<Exec>>();
