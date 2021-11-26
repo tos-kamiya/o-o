@@ -255,4 +255,26 @@ mod test {
         temp_dir.close()?;
         Ok(())
     }
+
+    #[test]
+    fn envrionment_variable() -> Result<(), io::Error> {
+        const SCRIPT: &str = "a_script.sh";
+
+        let temp_dir = tempdir()?;
+
+        let script = temp_dir.path().join(SCRIPT);
+        let _ = fs::write(SU(&script), "echo $V\n")?;
+
+        let output = Command::new("./target/debug/o-o").args(
+            ["-d", SU(&temp_dir.path()), "-e", "V=some", "-", "-", "-", "bash", SU(&script)])
+            .output()?;
+
+        assert!(output.status.code().unwrap() == 0);
+
+        let output_contents = String::from_utf8(output.stdout).unwrap();
+        assert!(output_contents.find("some").is_some());
+
+        temp_dir.close()?;
+        Ok(())
+    }
 }
