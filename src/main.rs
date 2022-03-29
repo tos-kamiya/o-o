@@ -1,18 +1,18 @@
 use std::env;
 use std::fs;
-use std::rc::{Rc};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
+use std::rc::Rc;
 
 use anyhow::{Context, Result};
-use subprocess::{Exec, ExitStatus, NullFile, Redirection, Pipeline};
+use subprocess::{Exec, ExitStatus, NullFile, Pipeline, Redirection};
 use tempfile::{tempdir, TempDir};
 use thiserror::Error;
 
 use zgclp::{arg_parse, Arg};
 
 fn split_append_flag(file_name: &str) -> (&str, bool) {
-    if let Some(stripped) = file_name.strip_prefix("+") {
+    if let Some(stripped) = file_name.strip_prefix('+') {
         (stripped, true)
     } else {
         (file_name, false)
@@ -29,10 +29,12 @@ fn open_for_writing(file_name: &str) -> std::io::Result<File> {
 }
 
 fn copy_to(mut src: File, mut dst: File) -> Result<()> {
-    let mut buf = [0; 64*1024];
+    let mut buf = [0; 64 * 1024];
     loop {
         match src.read(&mut buf)? {
-            0 => { break; }
+            0 => {
+                break;
+            }
             n => {
                 let buf = &buf[..n];
                 dst.write_all(buf)?;
@@ -77,8 +79,10 @@ pub enum OOError {
     CLIError { message: String },
 }
 
-fn do_validate_fds<'a>(fds: &'a[&'a str], force_overwrite: bool) -> anyhow::Result<()> {
-    let err = |message: &str| Err(OOError::CLIError { message: message.to_string() }.into());
+fn do_validate_fds<'a>(fds: &'a [&'a str], force_overwrite: bool) -> anyhow::Result<()> {
+    let err = |message: &str| {
+        Err(OOError::CLIError { message: message.to_string() }.into())
+    };
 
     if fds.len() < 3 {
         return err("requires three arguments: stdin, stdout and stderr");
@@ -89,7 +93,7 @@ fn do_validate_fds<'a>(fds: &'a[&'a str], force_overwrite: bool) -> anyhow::Resu
             return err("not possible to use `-` or `=` in combination with `+`");
         }
         if fds[i] != "-" && fds[i] != "=" {
-            for j in i + 1 .. fds.len() {
+            for j in i + 1..fds.len() {
                 if split_append_flag(fds[j]).0 == split_append_flag(fds[i]).0 {
                     return err("explicitly use `=` when dealing with the same file");
                 }
@@ -114,7 +118,7 @@ fn do_validate_fds<'a>(fds: &'a[&'a str], force_overwrite: bool) -> anyhow::Resu
 }
 
 macro_rules! exec_it {
-    ( $sp:ident, $fds:expr, $force_overwrite:expr ) => (
+    ( $sp:ident, $fds:expr, $force_overwrite:expr ) => {
         (|| -> Result<ExitStatus> {
             if $fds[0] != "-" {
                 let fname = split_append_flag(&$fds[0]).0;
@@ -149,15 +153,15 @@ macro_rules! exec_it {
                     } else {
                         fs::rename(temp_file, f)?;
                     }
-                } else if ! success {
-                    eprintln!("Warning: exit code != 0. Not overwrite the file: {}", f); 
+                } else if !success {
+                    eprintln!("Warning: exit code != 0. Not overwrite the file: {}", f);
                 }
                 dir.close()?;
             }
 
             Ok(exit_status)
         })()
-    )
+    };
 }
 
 fn main() -> anyhow::Result<()> {
@@ -192,8 +196,10 @@ fn main() -> anyhow::Result<()> {
                 eat
             }
             (Arg::Option("-e"), _, Some((eat, value))) => {
-                let p = value.find("=").with_context(|| format!("{}", "o-o: option -e's argument should be `VAR=VALUE`"))?;
-                envs.push((&value[.. p], &value[p + 1 ..]));
+                let p = value
+                    .find('=')
+                    .expect("o-o: option -e's argument should be `VAR=VALUE`");
+                envs.push((&value[..p], &value[p + 1..]));
                 eat
             }
             (Arg::Option("-d" | "--working-directory"), _, Some((eat, value))) => {
@@ -215,17 +221,20 @@ fn main() -> anyhow::Result<()> {
                 eat
             }
             _ => {
-                return Err(OOError::InvaidArgument { name: argv[ai].to_string() }.into());
+                return Err(OOError::InvaidArgument {
+                    name: argv[ai].to_string(),
+                }
+                .into());
             }
         };
         ai += eat;
     }
-    command_line.extend_from_slice(&argv[ai ..]);
+    command_line.extend_from_slice(&argv[ai..]);
 
     let mut sub_command_lines = Vec::<&[&str]>::new();
     if let Some(p) = pipe_str {
         let mut i = 0;
-        for j in i..command_line.len() {
+        for j in 0..command_line.len() {
             if command_line[j] == p && j > i {
                 sub_command_lines.push(&command_line[i..j]);
                 i = j + 1;
@@ -267,23 +276,25 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Invoke a sub-process
-    let mut execs: Vec<Exec> = sub_command_lines.iter().map(|&scl| { 
-        let mut exec = Exec::cmd(&scl[0]).args(&scl[1..]);
-        if ! envs.is_empty() {
-            exec = exec.env_extend(&envs);
-        }
-        if let Some(dir) = working_directory {
-            exec = exec.cwd(dir);
-        }
-        if let Some(ss) = &stderr_sink {
-            exec = exec.stderr(Redirection::RcFile(ss.clone()));
-        } else if fds[2] == "=" {
-            exec = exec.stderr(Redirection::Merge);
-        } else if fds[2] == "." {
-            exec = exec.stderr(NullFile);
-        }
-        exec
-    }).collect();
+    let mut execs: Vec<Exec> = sub_command_lines
+        .iter()
+        .map(|&scl| {
+            let mut exec = Exec::cmd(&scl[0]).args(&scl[1..]);
+            if !envs.is_empty() {
+                exec = exec.env_extend(&envs);
+            }
+            if let Some(dir) = working_directory {
+                exec = exec.cwd(dir);
+            }
+            if let Some(ss) = &stderr_sink {
+                exec = exec.stderr(Redirection::RcFile(ss.clone()));
+            } else if fds[2] == "=" {
+                exec = exec.stderr(Redirection::Merge);
+            } else if fds[2] == "." {
+                exec = exec.stderr(NullFile);
+            }
+            exec
+        }).collect();
 
     let exit_status = if execs.len() >= 2 {
         let mut sp = Pipeline::from_exec_iter(execs);
@@ -294,7 +305,7 @@ fn main() -> anyhow::Result<()> {
     }?;
 
     let success = matches!(exit_status, ExitStatus::Exited(0));
-    if ! success {
+    if !success {
         eprintln!("Error: o-o: {:?}", exit_status);
         if let ExitStatus::Exited(code) = exit_status {
             std::process::exit(code.try_into()?);
