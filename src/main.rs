@@ -4,9 +4,10 @@ use std::rc::{Rc};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use subprocess::{Exec, ExitStatus, NullFile, Redirection, Pipeline};
 use tempfile::{tempdir, TempDir};
+use thiserror::Error;
 
 use zgclp::{arg_parse, Arg};
 
@@ -64,19 +65,33 @@ Options:
   --working-directory=DIR, -d DIR   Working directory.
 ";
 
-fn do_validate_fds<'a>(fds: &'a[&'a str], force_overwrite: bool) -> std::result::Result<(), &str> {
+#[derive(Error, Debug)]
+pub enum OOError {
+    #[error("o-o: invalid argument/option {}", .name)]
+    InvaidArgument { name: String },
+
+    #[error("o-o: no command line specified")]
+    NoCommandLineSpecified,
+
+    #[error("o-o: {}", .message)]
+    CLIError { message: String },
+}
+
+fn do_validate_fds<'a>(fds: &'a[&'a str], force_overwrite: bool) -> anyhow::Result<()> {
+    let err = |message: &str| Err(OOError::CLIError { message: message.to_string() }.into());
+
     if fds.len() < 3 {
-        return Err("required three arguments: stdin, stdout and stderr.");
+        return err("requires three arguments: stdin, stdout and stderr");
     }
 
     for i in 0..fds.len() {
         if fds[i] == "+-" || fds[i] == "+=" {
-            return Err("not possible to use `-` or `=` in combination with `+`.");
+            return err("not possible to use `-` or `=` in combination with `+`");
         }
         if fds[i] != "-" && fds[i] != "=" {
             for j in i + 1 .. fds.len() {
                 if split_append_flag(fds[j]).0 == split_append_flag(fds[i]).0 {
-                    return Err("explicitly use `=` when dealing with the same file.");
+                    return err("explicitly use `=` when dealing with the same file");
                 }
             }
         }
@@ -84,15 +99,15 @@ fn do_validate_fds<'a>(fds: &'a[&'a str], force_overwrite: bool) -> std::result:
 
     if force_overwrite {
         if fds[0] == "-" {
-            return Err("option --force-overwrite requires a real file name.");
+            return err("option --force-overwrite requires a real file name");
         }
         if fds[1] != "=" {
-            return Err("option --force-overwrite is only valid when <stdout> is `=`.");
+            return err("option --force-overwrite is only valid when <stdout> is `=`");
         }
     }
 
     if fds[0] == "=" || fds[0] == "." {
-        return Err("can not specify either `=` or `.` as stdin.");
+        return err("can not specify either `=` or `.` as stdin");
     }
 
     Ok(())
@@ -100,13 +115,10 @@ fn do_validate_fds<'a>(fds: &'a[&'a str], force_overwrite: bool) -> std::result:
 
 macro_rules! exec_it {
     ( $sp:ident, $fds:expr, $force_overwrite:expr ) => (
-        {
+        (|| -> Result<ExitStatus> {
             if $fds[0] != "-" {
                 let fname = split_append_flag(&$fds[0]).0;
-                let f = File::open(fname).unwrap_or_else(|_| {
-                    eprintln!("Error: o-o: fail to open: {}", fname);
-                    std::process::exit(1);
-                });
+                let f = File::open(fname).with_context(|| format!("o-o: fail to open: {}", fname))?;
                 $sp = $sp.stdin(f);
             }
 
@@ -143,17 +155,17 @@ macro_rules! exec_it {
                 dir.close()?;
             }
 
-            exit_status
-        }
+            Ok(exit_status)
+        })()
     )
 }
 
-fn main() -> Result<()> {
+fn main() -> anyhow::Result<()> {
     // Parse command-line arguments
-    let mut fds = Vec::<&str>::new();
-    let mut command_line = Vec::<&str>::new();
+    let mut fds: Vec<&str> = vec![];
+    let mut command_line: Vec<&str> = vec![];
     let mut force_overwrite = false;
-    let mut envs = Vec::<(&str, &str)>::new();
+    let mut envs: Vec<(&str, &str)> = vec![];
     let mut working_directory: Option<&str> = None;
     let mut debug_info = false;
     let mut pipe_str: Option<&str> = None;
@@ -180,10 +192,7 @@ fn main() -> Result<()> {
                 eat
             }
             (Arg::Option("-e"), _, Some((eat, value))) => {
-                let p = value.find("=").unwrap_or_else(|| {
-                    eprintln!("{}", "Error: o-o: option -e's argument should be `VAR=VALUE`.");
-                    std::process::exit(1);
-                });
+                let p = value.find("=").with_context(|| format!("{}", "o-o: option -e's argument should be `VAR=VALUE`"))?;
                 envs.push((&value[.. p], &value[p + 1 ..]));
                 eat
             }
@@ -206,8 +215,7 @@ fn main() -> Result<()> {
                 eat
             }
             _ => {
-                eprintln!("Error: o-o: invalid option/argument: {}", argv[ai]);
-                std::process::exit(1);
+                return Err(OOError::InvaidArgument { name: argv[ai].to_string() }.into());
             }
         };
         ai += eat;
@@ -243,14 +251,10 @@ fn main() -> Result<()> {
 
     // Validate command-line arguments
     if command_line.is_empty() {
-        eprintln!("{}", "Error: o-o: no command line specified.");
-        std::process::exit(1);
+        return Err(OOError::NoCommandLineSpecified.into());
     }
 
-    if let Err(message) = do_validate_fds(&fds, force_overwrite) {
-        eprintln!("Error: o-o: {}", message);
-        std::process::exit(1);
-    }
+    do_validate_fds(&fds, force_overwrite)?;
 
     if fds[0] == "-" && fds[1] == "=" {
         fds[1] = "-";
@@ -263,7 +267,7 @@ fn main() -> Result<()> {
     }
 
     // Invoke a sub-process
-    let mut execs = sub_command_lines.iter().map(|&scl| { 
+    let mut execs: Vec<Exec> = sub_command_lines.iter().map(|&scl| { 
         let mut exec = Exec::cmd(&scl[0]).args(&scl[1..]);
         if ! envs.is_empty() {
             exec = exec.env_extend(&envs);
@@ -279,7 +283,7 @@ fn main() -> Result<()> {
             exec = exec.stderr(NullFile);
         }
         exec
-    }).collect::<Vec<Exec>>();
+    }).collect();
 
     let exit_status = if execs.len() >= 2 {
         let mut sp = Pipeline::from_exec_iter(execs);
@@ -287,7 +291,7 @@ fn main() -> Result<()> {
     } else {
         let mut sp = execs.pop().unwrap();
         exec_it!(sp, fds, force_overwrite)
-    };
+    }?;
 
     let success = matches!(exit_status, ExitStatus::Exited(0));
     if ! success {
