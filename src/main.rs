@@ -9,7 +9,7 @@ use subprocess::{Exec, ExitStatus, NullFile, Pipeline, Redirection};
 use tempfile::{tempdir, TempDir};
 use thiserror::Error;
 
-use zgclp::{arg_parse, Arg};
+use ng_clp::{is_argument, next_index, parse, unwrap_argument};
 
 fn split_append_flag(file_name: &str) -> (&str, bool) {
     if let Some(stripped) = file_name.strip_prefix('+') {
@@ -176,60 +176,69 @@ fn main() -> anyhow::Result<()> {
 
     let argv0: Vec<String> = env::args().collect();
     let argv: Vec<&str> = argv0.iter().map(AsRef::as_ref).collect();
-    let mut ai = 1;
-    while ai < argv.len() && fds.len() < 3 {
-        let eat = match arg_parse(&argv, ai) {
-            (Arg::Option("-h" | "--help"), Some(_eat), _) => {
+
+    if argv.len() == 1 {
+        print!("{}", USAGE);
+        return Ok(())
+    }
+
+    let mut argv_index = 1;
+    while fds.len() < 3 {
+        let pr = parse(&argv, argv_index)?;
+        let eat = match pr.0 {
+            "-h" | "--help" => { // help
                 print!("{}", USAGE);
-                std::process::exit(0);
+                return Ok(())
             }
-            (Arg::Option("-v" | "--version"), Some(_eat), _) => {
+            "-V" | "--version" => {
                 println!("{} {}", NAME, VERSION);
-                std::process::exit(0);
+                return Ok(())
             }
-            (Arg::Option("-F" | "--force-overwrite"), Some(eat), _) => {
+            "-F" | "--force-overwrite" => {
                 force_overwrite = true;
-                eat
+                1
             }
-            (Arg::Option("--debug-info"), Some(eat), _) => {
+            "--debug-info" => {
                 debug_info = true;
-                eat
+                1
             }
-            (Arg::Option("-e"), _, Some((eat, value))) => {
+            "-e" => {
+                let value = unwrap_argument(pr)?;
                 let p = value
                     .find('=')
                     .expect("o-o: option -e's argument should be `VAR=VALUE`");
                 envs.push((&value[..p], &value[p + 1..]));
-                eat
+                2
             }
-            (Arg::Option("-d" | "--working-directory"), _, Some((eat, value))) => {
-                working_directory = Some(value);
-                eat
+            "-d" | "--working-directory" => {
+                working_directory = Some(unwrap_argument(pr)?);
+                2
             }
-            (Arg::Option("-p" | "--pipe"), _, Some((eat, value))) => {
-                pipe_str = Some(value);
-                eat
+            "-p" | "--pipe"  => {
+                pipe_str = Some(unwrap_argument(pr)?);
+                2
             }
-            (Arg::Separator(_), Some(eat), _) => {
+            a if is_argument(a) => { // argument
+                fds.push(a);
+                1
+            }
+            "--" => { // separator
                 while fds.len() < 3 {
                     fds.push("-");
                 }
-                eat
+                break;
             }
-            (Arg::Value, _, Some((eat, value))) => {
-                fds.push(value);
-                eat
-            }
-            _ => {
-                return Err(OOError::InvaidArgument {
-                    name: argv[ai].to_string(),
-                }
-                .into());
-            }
+            _ => 0 // unknown flag/option 
         };
-        ai += eat;
+
+        argv_index = next_index(&argv, argv_index, eat)?;
+        if argv_index >= argv.len() {
+            break;
+        }
     }
-    command_line.extend_from_slice(&argv[ai..]);
+    if argv_index < argv.len() {
+        command_line.extend_from_slice(&argv[argv_index..]);
+    }
 
     let mut sub_command_lines = Vec::<&[&str]>::new();
     if let Some(p) = pipe_str {
