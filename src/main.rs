@@ -218,15 +218,16 @@ fn main() -> anyhow::Result<()> {
                 pipe_str = Some(unwrap_argument(pr)?);
                 2
             }
-            a if is_argument(a) => { // argument
-                fds.push(a);
-                1
-            }
             "--" => { // separator
                 while fds.len() < 3 {
                     fds.push("-");
                 }
+                argv_index += 1;
                 break;
+            }
+            a if is_argument(a) => { // argument
+                fds.push(a);
+                1
             }
             _ => 0 // unknown flag/option 
         };
