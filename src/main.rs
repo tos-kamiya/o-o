@@ -65,6 +65,8 @@ Options:
   --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (that is, `|`).
   --force-overwrite, -F             Overwrite the file even when exit status != 0. Valid only when <stdout> is `=`.
   --working-directory=DIR, -d DIR   Working directory.
+  --version, -V                     Version info.
+  --help, -h                        Help message.
 ";
 
 #[derive(Error, Debug)]
