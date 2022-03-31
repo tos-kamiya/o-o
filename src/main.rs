@@ -81,6 +81,98 @@ pub enum OOError {
     CLIError { message: String },
 }
 
+#[derive(Debug, PartialEq)]
+struct Args<'s> {
+    fds: Vec<&'s str>,
+    command_line: Vec<&'s str>,
+    force_overwrite: bool,
+    envs: Vec<(&'s str, &'s str)>,
+    working_directory: Option<&'s str>,
+    debug_info: bool,
+    pipe_str: Option<&'s str>,
+}
+
+impl Args<'_> {
+    fn parse<'s>(argv: &Vec<&'s str>) -> anyhow::Result<Args<'s>> {
+        let mut args = Args {
+            fds: vec![],
+            command_line: vec![],
+            force_overwrite: false,
+            envs: vec![],
+            working_directory: None,
+            debug_info: false,
+            pipe_str: None,
+        };
+
+        let mut argv_index = 1;
+        while args.fds.len() < 3 {
+            let pr = parse(&argv, argv_index)?;
+            let eat = match pr.0 {
+                "-h" | "--help" => { // help
+                    print!("{}", USAGE);
+                    std::process::exit(0);
+                }
+                "-V" | "--version" => {
+                    println!("{} {}", NAME, VERSION);
+                    std::process::exit(0);
+                }
+                "-F" | "--force-overwrite" => {
+                    args.force_overwrite = true;
+                    1
+                }
+                "--debug-info" => {
+                    args.debug_info = true;
+                    1
+                }
+                "-e" => {
+                    let value = unwrap_argument(pr)?;
+                    let p = value
+                        .find('=')
+                        .expect("o-o: option -e's argument should be `VAR=VALUE`");
+                    args.envs.push((&value[..p], &value[p + 1..]));
+                    2
+                }
+                "-d" | "--working-directory" => {
+                    args.working_directory = Some(unwrap_argument(pr)?);
+                    2
+                }
+                "-p" | "--pipe"  => {
+                    args.pipe_str = Some(unwrap_argument(pr)?);
+                    2
+                }
+                "--" => { // separator
+                    while args.fds.len() < 3 {
+                        args.fds.push("-");
+                    }
+                    break;
+                }
+                a if is_argument(a) => { // argument
+                    args.fds.push(a);
+                    1
+                }
+                _ => 0 // unknown flag/option 
+            };
+    
+            argv_index = next_index(&argv, argv_index, eat)?;
+            if argv_index >= argv.len() {
+                break;
+            }
+        }
+        if argv_index < argv.len() {
+            if argv[argv_index] == "--" { // in case a redundant "--" is given as the 4th argument
+                argv_index += 1;
+            }
+            args.command_line.extend_from_slice(&argv[argv_index..]);
+        }
+
+        if args.fds.len() < 3 {
+            return Err(OOError::NoCommandLineSpecified.into());
+        }
+
+        Ok(args)
+    }
+}
+
 fn do_validate_fds<'a>(fds: &'a [&'a str], force_overwrite: bool) -> anyhow::Result<()> {
     let err = |message: &str| {
         Err(OOError::CLIError { message: message.to_string() }.into())
@@ -168,122 +260,56 @@ macro_rules! exec_it {
 
 fn main() -> anyhow::Result<()> {
     // Parse command-line arguments
-    let mut fds: Vec<&str> = vec![];
-    let mut command_line: Vec<&str> = vec![];
-    let mut force_overwrite = false;
-    let mut envs: Vec<(&str, &str)> = vec![];
-    let mut working_directory: Option<&str> = None;
-    let mut debug_info = false;
-    let mut pipe_str: Option<&str> = None;
-
     let argv0: Vec<String> = env::args().collect();
     let argv: Vec<&str> = argv0.iter().map(AsRef::as_ref).collect();
-
     if argv.len() == 1 {
         print!("{}", USAGE);
-        return Ok(())
+        return Ok(());
     }
 
-    let mut argv_index = 1;
-    while fds.len() < 3 {
-        let pr = parse(&argv, argv_index)?;
-        let eat = match pr.0 {
-            "-h" | "--help" => { // help
-                print!("{}", USAGE);
-                return Ok(())
-            }
-            "-V" | "--version" => {
-                println!("{} {}", NAME, VERSION);
-                return Ok(())
-            }
-            "-F" | "--force-overwrite" => {
-                force_overwrite = true;
-                1
-            }
-            "--debug-info" => {
-                debug_info = true;
-                1
-            }
-            "-e" => {
-                let value = unwrap_argument(pr)?;
-                let p = value
-                    .find('=')
-                    .expect("o-o: option -e's argument should be `VAR=VALUE`");
-                envs.push((&value[..p], &value[p + 1..]));
-                2
-            }
-            "-d" | "--working-directory" => {
-                working_directory = Some(unwrap_argument(pr)?);
-                2
-            }
-            "-p" | "--pipe"  => {
-                pipe_str = Some(unwrap_argument(pr)?);
-                2
-            }
-            "--" => { // separator
-                while fds.len() < 3 {
-                    fds.push("-");
-                }
-                argv_index += 1;
-                break;
-            }
-            a if is_argument(a) => { // argument
-                fds.push(a);
-                1
-            }
-            _ => 0 // unknown flag/option 
-        };
-
-        argv_index = next_index(&argv, argv_index, eat)?;
-        if argv_index >= argv.len() {
-            break;
-        }
-    }
-    if argv_index < argv.len() {
-        command_line.extend_from_slice(&argv[argv_index..]);
-    }
+    let mut a = Args::parse(&argv)?;
 
     let mut sub_command_lines = Vec::<&[&str]>::new();
-    if let Some(p) = pipe_str {
+    if let Some(p) = a.pipe_str {
         let mut i = 0;
-        for j in 0..command_line.len() {
-            if command_line[j] == p && j > i {
-                sub_command_lines.push(&command_line[i..j]);
+        for j in 0..a.command_line.len() {
+            if a.command_line[j] == p && j > i {
+                sub_command_lines.push(&a.command_line[i..j]);
                 i = j + 1;
             }
         }
-        if i < command_line.len() {
-            sub_command_lines.push(&command_line[i..]);
+        if i < a.command_line.len() {
+            sub_command_lines.push(&a.command_line[i..]);
         }
     } else {
-        sub_command_lines.push(&command_line);
+        sub_command_lines.push(&a.command_line);
     }
 
-    if debug_info {
-        println!("fds = {:?}", fds);
-        println!("command_line = {:?}", command_line);
+    if a.debug_info {
+        println!("fds = {:?}", a.fds);
+        println!("command_line = {:?}", a.command_line);
         println!("sub_command_line = {:?}", sub_command_lines);
-        println!("force_overwrite = {:?}", force_overwrite);
-        println!("envs = {:?}", envs);
-        println!("working_directory = {:?}", working_directory);
-        println!("pipe = {:?}", pipe_str);
+        println!("force_overwrite = {:?}", a.force_overwrite);
+        println!("envs = {:?}", a.envs);
+        println!("working_directory = {:?}", a.working_directory);
+        println!("pipe = {:?}", a.pipe_str);
         return Ok(());
     }
 
     // Validate command-line arguments
-    if command_line.is_empty() {
+    if a.command_line.is_empty() {
         return Err(OOError::NoCommandLineSpecified.into());
     }
 
-    do_validate_fds(&fds, force_overwrite)?;
+    do_validate_fds(&a.fds, a.force_overwrite)?;
 
-    if fds[0] == "-" && fds[1] == "=" {
-        fds[1] = "-";
+    if a.fds[0] == "-" && a.fds[1] == "=" {
+        a.fds[1] = "-";
     }
 
     let mut stderr_sink: Option<Rc<File>> = None;
-    if fds[2] != "-" && fds[2] != "=" && fds[2] != "." {
-        let f = open_for_writing(fds[2])?;
+    if a.fds[2] != "-" && a.fds[2] != "=" && a.fds[2] != "." {
+        let f = open_for_writing(a.fds[2])?;
         stderr_sink = Some(Rc::new(f));
     }
 
@@ -292,17 +318,17 @@ fn main() -> anyhow::Result<()> {
         .iter()
         .map(|&scl| {
             let mut exec = Exec::cmd(&scl[0]).args(&scl[1..]);
-            if !envs.is_empty() {
-                exec = exec.env_extend(&envs);
+            if !a.envs.is_empty() {
+                exec = exec.env_extend(&a.envs);
             }
-            if let Some(dir) = working_directory {
+            if let Some(dir) = a.working_directory {
                 exec = exec.cwd(dir);
             }
             if let Some(ss) = &stderr_sink {
                 exec = exec.stderr(Redirection::RcFile(ss.clone()));
-            } else if fds[2] == "=" {
+            } else if a.fds[2] == "=" {
                 exec = exec.stderr(Redirection::Merge);
-            } else if fds[2] == "." {
+            } else if a.fds[2] == "." {
                 exec = exec.stderr(NullFile);
             }
             exec
@@ -310,10 +336,10 @@ fn main() -> anyhow::Result<()> {
 
     let exit_status = if execs.len() >= 2 {
         let mut sp = Pipeline::from_exec_iter(execs);
-        exec_it!(sp, fds, force_overwrite)
+        exec_it!(sp, a.fds, a.force_overwrite)
     } else {
         let mut sp = execs.pop().unwrap();
-        exec_it!(sp, fds, force_overwrite)
+        exec_it!(sp, a.fds, a.force_overwrite)
     }?;
 
     let success = matches!(exit_status, ExitStatus::Exited(0));
@@ -330,8 +356,82 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
+mod argv_parse_test {
+    use super::*;
 
-mod test {
+    #[test]
+    fn parse_empty() {
+        let argv: Vec<&str> = vec!["exec", "cmd"];
+        let _err: anyhow::Error = Args::parse(&argv).unwrap_err();
+    }
+
+    #[test]
+    fn parse_fds() {
+        let argv: Vec<&str> = vec!["exec", "a", "b", "c", "cmd"];
+        let a = Args::parse(&argv).unwrap();
+
+        assert_eq!(a, Args { 
+            fds: vec!["a", "b", "c"],
+            command_line: vec!["cmd"],
+            force_overwrite: false,
+            envs: vec![],
+            working_directory: None,
+            debug_info: false,
+            pipe_str: None,
+        });
+    }
+
+    #[test]
+    fn parse_omitted_fds() {
+        let argv: Vec<&str> = vec!["exec", "a", "b", "--", "cmd"];
+        let a = Args::parse(&argv).unwrap();
+
+        assert_eq!(a, Args { 
+            fds: vec!["a", "b", "-"],
+            command_line: vec!["cmd"],
+            force_overwrite: false,
+            envs: vec![],
+            working_directory: None,
+            debug_info: false,
+            pipe_str: None,
+        });
+    }
+
+    #[test]
+    fn parse_omitted_fds2() {
+        let argv: Vec<&str> = vec!["exec", "a", "--", "cmd"];
+        let a = Args::parse(&argv).unwrap();
+
+        assert_eq!(a, Args { 
+            fds: vec!["a", "-", "-"],
+            command_line: vec!["cmd"],
+            force_overwrite: false,
+            envs: vec![],
+            working_directory: None,
+            debug_info: false,
+            pipe_str: None,
+        });
+    }
+
+    #[test]
+    fn parse_omitted_fds3() {
+        let argv: Vec<&str> = vec!["exec", "--", "cmd"];
+        let a = Args::parse(&argv).unwrap();
+
+        assert_eq!(a, Args { 
+            fds: vec!["-", "-", "-"],
+            command_line: vec!["cmd"],
+            force_overwrite: false,
+            envs: vec![],
+            working_directory: None,
+            debug_info: false,
+            pipe_str: None,
+        });
+    }
+}
+
+#[cfg(test)]
+mod fds_validate_test {
     use super::*;
 
     #[test]
