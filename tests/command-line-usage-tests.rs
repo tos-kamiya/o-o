@@ -19,7 +19,7 @@ mod test {
             .status()
             .expect("failed to run o-o");
 
-        assert_eq!(status.code().unwrap(), 1);
+        assert_eq!(status.code().unwrap(), 0);
     }
 
     #[test]
