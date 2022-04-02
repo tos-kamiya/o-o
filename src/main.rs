@@ -1,10 +1,13 @@
+#[macro_use]
+extern crate anyhow;
+
 use std::env;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::rc::Rc;
 
-use anyhow::{Context, Result};
+use anyhow::{Context};
 use subprocess::{Exec, ExitStatus, NullFile, Pipeline, Redirection};
 use tempfile::{tempdir, TempDir};
 use thiserror::Error;
@@ -28,7 +31,7 @@ fn open_for_writing(file_name: &str) -> std::io::Result<File> {
     }
 }
 
-fn copy_to(mut src: File, mut dst: File) -> Result<()> {
+fn copy_to(mut src: File, mut dst: File) -> std::io::Result<()> {
     let mut buf = [0; 64 * 1024];
     loop {
         match src.read(&mut buf)? {
@@ -49,6 +52,12 @@ const NAME: &str = env!("CARGO_PKG_NAME");
 
 const STDOUT_TEMP: &str = "STDOUT_TEMP";
 
+#[derive(Error, Debug)]
+pub enum OOError {
+    #[error("o-o: {}", .message)]
+    CLIError { message: String },
+}
+
 const USAGE: &str = "Start a sub-process and redirect its standard I/O's.
 
 Usage:
@@ -68,18 +77,6 @@ Options:
   --version, -V                     Version info.
   --help, -h                        Help message.
 ";
-
-#[derive(Error, Debug)]
-pub enum OOError {
-    #[error("o-o: invalid argument/option {}", .name)]
-    InvaidArgument { name: String },
-
-    #[error("o-o: no command line specified")]
-    NoCommandLineSpecified,
-
-    #[error("o-o: {}", .message)]
-    CLIError { message: String },
-}
 
 #[derive(Debug, PartialEq)]
 struct Args<'s> {
@@ -166,14 +163,14 @@ impl Args<'_> {
         }
 
         if args.fds.len() < 3 {
-            return Err(OOError::NoCommandLineSpecified.into());
+            return Err(OOError::CLIError { message: "no command line specified".to_string() }.into())
         }
 
         Ok(args)
     }
 }
 
-fn do_validate_fds<'a>(fds: &'a [&'a str], force_overwrite: bool) -> anyhow::Result<()> {
+fn do_validate_fds<'a>(fds: &'a [&'a str], force_overwrite: bool) -> std::result::Result<(), OOError> {
     let err = |message: &str| {
         Err(OOError::CLIError { message: message.to_string() }.into())
     };
@@ -213,7 +210,7 @@ fn do_validate_fds<'a>(fds: &'a [&'a str], force_overwrite: bool) -> anyhow::Res
 
 macro_rules! exec_it {
     ( $sp:ident, $fds:expr, $force_overwrite:expr ) => {
-        (|| -> Result<ExitStatus> {
+        (|| -> anyhow::Result<ExitStatus> {
             if $fds[0] != "-" {
                 let fname = split_append_flag(&$fds[0]).0;
                 let f = File::open(fname).with_context(|| format!("o-o: fail to open: {}", fname))?;
@@ -298,7 +295,7 @@ fn main() -> anyhow::Result<()> {
 
     // Validate command-line arguments
     if a.command_line.is_empty() {
-        return Err(OOError::NoCommandLineSpecified.into());
+        return Err(anyhow!("o-o: no command line specified"));
     }
 
     do_validate_fds(&a.fds, a.force_overwrite)?;
