@@ -162,7 +162,7 @@ impl Args<'_> {
             args.command_line.extend_from_slice(&argv[argv_index..]);
         }
 
-        if args.fds.len() < 3 {
+        if args.command_line.is_empty() {
             return Err(OOError::CLIError { message: "no command line specified".to_string() }.into())
         }
 
