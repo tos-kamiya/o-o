@@ -14,6 +14,8 @@ use thiserror::Error;
 
 use ng_clp::{is_argument, next_index, parse, unwrap_argument};
 
+use o_o::*;
+
 fn split_append_flag(file_name: &str) -> (&str, bool) {
     if let Some(stripped) = file_name.strip_prefix('+') {
         (stripped, true)
@@ -177,6 +179,12 @@ fn do_validate_fds<'a>(fds: &'a [&'a str], force_overwrite: bool) -> std::result
 
     if fds.len() < 3 {
         return err("requires three arguments: stdin, stdout and stderr");
+    }
+
+    for fd in &fds[1..] {
+        if command_exists(fd) {
+            return Err(OOError::CLIError { message: format!("out/err looks a command: {}\n> (Use `--` to explicitly separate command from out/err)", fd)})
+        }
     }
 
     for i in 0..fds.len() {
