@@ -162,6 +162,10 @@ impl Args<'_> {
             args.command_line.extend_from_slice(&argv[argv_index..]);
         }
 
+        if args.command_line.is_empty() {
+            return Err(OOError::CLIError { message: "no command line specified".to_string() }.into())
+        }
+
         Ok(args)
     }
 }
@@ -261,12 +265,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     let mut a = Args::parse(&argv)?;
-    for fd in &a.fds[1..] {
-        if let Ok(p) = which::which(fd) {
-            let s: String = p.to_str().unwrap().to_string();
-            return Err(anyhow!("Error: o-o: an output file looks command: {}\n> (use `--` explicitly to separate command line from in/out/err)\n", s));
-        }
-    }
 
     let mut sub_command_lines = Vec::<&[&str]>::new();
     if let Some(p) = a.pipe_str {
@@ -296,7 +294,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Validate command-line arguments
-    println!("a.command_line = {:?}", a.command_line);
     if a.command_line.is_empty() {
         return Err(anyhow!("o-o: no command line specified"));
     }
@@ -342,11 +339,17 @@ fn main() -> anyhow::Result<()> {
         exec_it!(sp, a.fds, a.force_overwrite)
     }?;
 
-    if let ExitStatus::Exited(code) = exit_status {
-        std::process::exit(code.try_into().unwrap());
-    } else {
-        std::process::exit(1);
+    let success = matches!(exit_status, ExitStatus::Exited(0));
+    if !success {
+        eprintln!("Error: o-o: {:?}", exit_status);
+        if let ExitStatus::Exited(code) = exit_status {
+            std::process::exit(code.try_into()?);
+        } else {
+            std::process::exit(1);
+        }
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
