@@ -58,6 +58,27 @@ Use the cargo command to install.
 cargo install o-o
 ```
 
+## A Sample
+
+### Extract vba source code from Excel files.
+
+For each of `*.xlsm` files, extract vba source code from it, delete the first 5 lines, and save the code to a file with the same name but with the extension changed to `.vba`.
+
+```
+ls *.xlsm | rargs -p '(.*)\.xlsm' o-o -p%% - '{1}'.vba - olevba -c '{0}' %% sed -e 1,5d
+```
+
+The above executes the following command line when there was a file named `foo.xlsm`, for example.
+
+```
+olevba -c foo.xlsm | sed -e 1,5d > foo.vba
+```
+
+Here,
+
+* [rargs](https://github.com/lotabout/rargs) is a command that takes a filename and executes the specified command line, similar to xargs
+* [olevba](https://pypi.org/project/oletools/) is a command to extract vba code from an Excel file.
+
 ## License
 
 MIT/Apache-2.0
