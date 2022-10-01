@@ -478,6 +478,7 @@ mod argv_parse_test {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            tempdir_placeholder: None,
         });
     }
 
@@ -494,6 +495,7 @@ mod argv_parse_test {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            tempdir_placeholder: None,
         });
     }
 
@@ -510,6 +512,7 @@ mod argv_parse_test {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            tempdir_placeholder: None,
         });
     }
 
@@ -526,6 +529,7 @@ mod argv_parse_test {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            tempdir_placeholder: None,
         });
     }
 
@@ -542,6 +546,41 @@ mod argv_parse_test {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            tempdir_placeholder: None,
+        });
+    }
+
+    #[test]
+    fn parse_including_tempdir() {
+        let argv: Vec<&str> = vec!["exec", "---", "cat", "T/hoge.txt"];
+        let a = Args::parse(&argv).unwrap();
+
+        assert_eq!(a, Args { 
+            fds: vec!["-", "-", "-"],
+            command_line: vec!["cat", "T/hoge.txt"],
+            force_overwrite: false,
+            envs: vec![],
+            working_directory: None,
+            debug_info: false,
+            pipe_str: None,
+            tempdir_placeholder: None,
+        });
+    }
+
+    #[test]
+    fn parse_including_tempdir_option() {
+        let argv: Vec<&str> = vec!["exec", "-t", "HOGE", "---", "cat", "HOGE/hoge.txt"];
+        let a = Args::parse(&argv).unwrap();
+
+        assert_eq!(a, Args { 
+            fds: vec!["-", "-", "-"],
+            command_line: vec!["cat", "HOGE/hoge.txt"],
+            force_overwrite: false,
+            envs: vec![],
+            working_directory: None,
+            debug_info: false,
+            pipe_str: None,
+            tempdir_placeholder: Some("HOGE"),
         });
     }
 }
