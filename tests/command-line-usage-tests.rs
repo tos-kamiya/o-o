@@ -291,7 +291,7 @@ mod test {
                 SU(&script_echo_and_fail),
             ])
             .status()?;
-        assert!(status.code().unwrap() == 12);
+        assert!(status.code().unwrap() != 0);
 
         let file_a_contents = fs::read_to_string(SU(&file_a))?;
         assert!(file_a_contents.find("original contents").is_some());
@@ -329,7 +329,7 @@ mod test {
                 SU(&script_echo_and_fail),
             ])
             .status()?;
-        assert!(status.code().unwrap() == 12);
+        assert!(status.code().unwrap() != 0);
 
         let file_a_contents = fs::read_to_string(SU(&file_a))?;
         assert!(!file_a_contents.find("original contents").is_some());
