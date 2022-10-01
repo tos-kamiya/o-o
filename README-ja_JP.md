@@ -76,10 +76,10 @@ ls *.xlsm | rargs -p '(.*)\.xlsm' o-o - '{1}'.vba - olevba -c '{0}' I sed -e 1,5
 olevba -c foo.xlsm | sed -e 1,5d > foo.vba
 ```
 
-Here,
+このコマンドラインで、
 
-* [rargs](https://github.com/lotabout/rargs) is a command that takes a filename and executes the specified command line, similar to xargs
-* [olevba](https://pypi.org/project/oletools/) is a command to extract vba code from an Excel file.
+* [rargs](https://github.com/lotabout/rargs) は指定されたファイル名を与えてコマンドラインを実行するツールです（xargsに類似したツールです）。
+* [olevba](https://pypi.org/project/oletools/) はExcelのファイルからVBAのコードを抽出するツールです。
 
 ## ライセンス
 
