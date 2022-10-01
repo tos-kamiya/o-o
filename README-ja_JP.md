@@ -46,9 +46,10 @@ ls *.txt | xargs -I {} o-o - {}-head.out - head -3 {}
   <stderr>      標準エラー出力として扱われるファイルです。 `-` でリダイレクトしません。標準出力と同じファイルにする場合は `=` とします。`.`を指定すると/dev/nullになります。
                 ファイル名の前に `+` を付けると追加モードになります（`>>` 相当です）。
   -e VAR=VALUE                      環境変数。
-  --pipe=STR, -p STR                文字列をサブプロセスをつなげるパイプ（つまり`|`）の代わりに利用します。
+  --pipe=STR, -p STR                文字列をサブプロセスをつなげるパイプ（シェルの`|`）の代わりに利用します。デフォルトは`I`です。
+  --tempdir-placeholder=STR, -t STR     一時ディレクトリに展開される文字列。デフォルトは`T`です。
   --force-overwrite, -F             終了ステータスが != 0 のときもファイルを上書きします。<stdout> が `=` のときのみ有効です。
-  --working-directory=DIR, -d DIR   作業するディレクトリ。
+  --working-directory=DIR, -d DIR   作業ディレクトリ。
 ```
 
 ## インストール
@@ -59,6 +60,27 @@ Cargoコマンドによりインストールしてください。
 cargo install o-o
 ```
 
+## サンプル
+
+### エクセルファイルからVBAのコードを抽出する
+
+それぞれの`*.xlsm`ファイルからVBAのコードを収集津市、最初の5行を削除し、拡張子を`.vba`に変更したファイルに保存する。
+
+```
+ls *.xlsm | rargs -p '(.*)\.xlsm' o-o - '{1}'.vba - olevba -c '{0}' I sed -e 1,5d
+```
+
+上のコマンドラインは、ファイル名が `foo.xlsm`のエクセルファイルの場合は、次のコマンドラインと同様です。
+
+```
+olevba -c foo.xlsm | sed -e 1,5d > foo.vba
+```
+
+Here,
+
+* [rargs](https://github.com/lotabout/rargs) is a command that takes a filename and executes the specified command line, similar to xargs
+* [olevba](https://pypi.org/project/oletools/) is a command to extract vba code from an Excel file.
+
 ## ライセンス
 
 MIT/Apache-2.0
@@ -68,3 +90,5 @@ MIT/Apache-2.0
 - [x] Rustで再実装
 - [x] `--force-overwrite`のテスト
 - [x] /dev/nullを扱えるようにする
+- [x] 一時ディレクトリ機能
+

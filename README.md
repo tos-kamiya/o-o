@@ -46,9 +46,11 @@ Options:
                 Prefixing the file name with `+` will append to the file (`>>` in shell).
   -e VAR=VALUE                      Environment variables.
   --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (`|` in shell) [default: `I`].
+  --tempdir-placeholder=STR, -t STR     Placeholder string for temporary directory [default: `T`].
   --force-overwrite, -F             Overwrite the file even when exit status != 0. Valid only when <stdout> is `=`.
   --working-directory=DIR, -d DIR   Working directory.
   --version, -V                     Version info.
+  --help, -h                        Help message.
 ```
 
 ## Installation
@@ -89,3 +91,4 @@ MIT/Apache-2.0
 - [x] Reimplemented in Rust
 - [x] Testing `--force-overwrite`
 - [x] Enable handling of /dev/null
+- [x] Temporary directory feature

@@ -54,6 +54,27 @@ const NAME: &str = env!("CARGO_PKG_NAME");
 
 const STDOUT_TEMP: &str = "STDOUT_TEMP";
 
+fn unpack_shorthand_args(a: &str) -> Option<Vec<&'static str>> {
+    if a.len() != 3 {
+        return None;
+    }
+
+    let mut v: Vec<&'static str> = vec![];
+    for c in a.chars() {
+        if c == '-' {
+            v.push("-");
+        } else if c == '.' {
+            v.push(".");
+        } else if c == '=' {
+            v.push("=");
+        } else {
+            return None;
+        }
+    }
+
+    return Some(v);
+}
+
 #[derive(Error, Debug)]
 pub enum OOError {
     #[error("o-o: {}", .message)]
@@ -74,6 +95,7 @@ Options:
                 Prefixing the file name with `+` will append to the file (`>>` in shell).
   -e VAR=VALUE                      Environment variables.
   --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (`|` in shell) [default: `I`].
+  --tempdir-placeholder=STR, -t STR     Placeholder string for temporary directory [default: `T`].
   --force-overwrite, -F             Overwrite the file even when exit status != 0. Valid only when <stdout> is `=`.
   --working-directory=DIR, -d DIR   Working directory.
   --version, -V                     Version info.
@@ -89,6 +111,7 @@ struct Args<'s> {
     working_directory: Option<&'s str>,
     debug_info: bool,
     pipe_str: Option<&'s str>,
+    tempdir_placeholder: Option<&'s str>,
 }
 
 impl Args<'_> {
@@ -101,10 +124,19 @@ impl Args<'_> {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            tempdir_placeholder: None,
         };
 
-        let mut argv_index = 1;
+        let argv = &argv[1..];
+        let mut argv_index = 0;
         while args.fds.len() < 3 {
+            if args.fds.len() == 0 {
+                if let Some(u) = unpack_shorthand_args(argv[argv_index]) {
+                    args.fds = u;
+                    argv_index += 1;
+                    break; // while
+                }
+            }
             let pr = parse(&argv, argv_index)?;
             let eat = match pr.0 {
                 "-h" | "--help" => { // help
@@ -137,6 +169,10 @@ impl Args<'_> {
                 }
                 "-p" | "--pipe"  => {
                     args.pipe_str = Some(unwrap_argument(pr)?);
+                    2
+                }
+                "-t" | "--tempdir-placeholder" => {
+                    args.tempdir_placeholder = Some(unwrap_argument(pr)?);
                     2
                 }
                 "--" => { // separator
@@ -263,6 +299,31 @@ macro_rules! exec_it {
     };
 }
 
+fn replace_tempdir_name(arg: &str, tempdir_placeholder: &str, temp_dir_str: &str) -> Option<String> {
+    let parts: Vec<&str> = arg.split(tempdir_placeholder).collect();
+    let mut replaced_parts: Vec<String> = vec![];
+    let mut replacement_occurs = false;
+    for i in 0..parts.len() {
+        let prev = if i > 0 { parts[i - 1] } else { "" };
+        let next = if i + 1 < parts.len() { parts[i + 1] } else { "" };
+        let prev_last_char = if prev.is_empty() { ' ' } else { prev.chars().last().unwrap() };
+        let next_first_char = if next.is_empty() { ' ' } else { next.chars().nth(0).unwrap() };
+        if !prev_last_char.is_ascii_alphanumeric() && next_first_char == '/' {
+            let replaced = format!("{}{}{}", prev, temp_dir_str, next);
+            replaced_parts.push(replaced);
+            replacement_occurs = true;
+        } else {
+            replaced_parts.push(parts[i].to_owned());
+        }
+    }
+
+    if replacement_occurs {
+        Some(replaced_parts.join(""))
+    } else {
+        None
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     // Parse command-line arguments
     let argv0: Vec<String> = env::args().collect();
@@ -287,14 +348,50 @@ fn main() -> anyhow::Result<()> {
         sub_command_lines.push(&a.command_line[i..]);
     }
 
+    // Prepare temporary directory when tempdir-placeholder string is included in command line
+    let mut temp_dir: Option<TempDir> = None;
+    let td_placeholder = a.tempdir_placeholder.unwrap_or("T");
+    let mut tdrep_args: Vec<(&str, String)> = vec![];
+    let mut tdrep_sub_command_lines: Vec<Vec<String>> = vec![];
+    for i in 0..sub_command_lines.len() {
+        let scl = sub_command_lines[i];
+        tdrep_sub_command_lines.push(vec![]);
+        let tdrep_scl = tdrep_sub_command_lines.last_mut().unwrap();
+        for j in 0..scl.len() {
+            let arg = scl[j];
+            let r = replace_tempdir_name(arg, td_placeholder, "dummy");
+            if r.is_some() {
+                let td = temp_dir.get_or_insert_with(|| tempdir().unwrap());
+                let r = replace_tempdir_name(arg, td_placeholder, td.path().to_str().unwrap()).unwrap();
+                tdrep_args.push((arg, r.clone()));
+                tdrep_scl.push(r);
+            } else {
+                tdrep_scl.push(arg.to_string());
+            }
+        }
+    }
+
     if a.debug_info {
         println!("fds = {:?}", a.fds);
         println!("command_line = {:?}", a.command_line);
-        println!("sub_command_line = {:?}", sub_command_lines);
         println!("force_overwrite = {:?}", a.force_overwrite);
         println!("envs = {:?}", a.envs);
         println!("working_directory = {:?}", a.working_directory);
         println!("pipe = {:?}", a.pipe_str);
+        println!("tempdir_placeholder = {:?}", a.tempdir_placeholder);
+
+        println!("");
+        println!("target command lines:");
+        println!("{:?}", sub_command_lines);
+
+        if !tdrep_args.is_empty() {
+            println!("");
+            println!("tempdir-including arguments:");
+            for tra in tdrep_args {
+                println!("{:?}", tra.0);
+            }
+        }
+
         return Ok(());
     }
 
@@ -316,9 +413,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Invoke a sub-process
-    let mut execs: Vec<Exec> = sub_command_lines
+    let mut execs: Vec<Exec> = tdrep_sub_command_lines
         .iter()
-        .map(|&scl| {
+        .map(|scl| {
             let mut exec = Exec::cmd(&scl[0]).args(&scl[1..]);
             if !a.envs.is_empty() {
                 exec = exec.env_extend(&a.envs);
@@ -345,6 +442,7 @@ fn main() -> anyhow::Result<()> {
     }?;
 
     let success = matches!(exit_status, ExitStatus::Exited(0));
+
     if !success {
         eprintln!("Error: o-o: {:?}", exit_status);
         if let ExitStatus::Exited(code) = exit_status {
@@ -418,6 +516,22 @@ mod argv_parse_test {
     #[test]
     fn parse_omitted_fds3() {
         let argv: Vec<&str> = vec!["exec", "--", "cmd"];
+        let a = Args::parse(&argv).unwrap();
+
+        assert_eq!(a, Args { 
+            fds: vec!["-", "-", "-"],
+            command_line: vec!["cmd"],
+            force_overwrite: false,
+            envs: vec![],
+            working_directory: None,
+            debug_info: false,
+            pipe_str: None,
+        });
+    }
+
+    #[test]
+    fn parse_shorthand_fds() {
+        let argv: Vec<&str> = vec!["exec", "---", "cmd"];
         let a = Args::parse(&argv).unwrap();
 
         assert_eq!(a, Args { 
