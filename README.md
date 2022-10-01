@@ -43,11 +43,12 @@ Options:
   <stdin>       File served as the standard input. `-` for no redirection.
   <stdout>      File served as the standard output. `-` for no redirection. `=` for the same file as the standard input. `.` for /dev/null.
   <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output. `.` for /dev/null.
-                Prefixing the file name with `+` will append to the file (same as `>>`).
+                Prefixing the file name with `+` will append to the file (`>>` in shell).
   -e VAR=VALUE                      Environment variables.
-  --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (that is, `|`).
+  --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (`|` in shell) [default: `I`].
   --force-overwrite, -F             Overwrite the file even when exit status != 0. Valid only when <stdout> is `=`.
   --working-directory=DIR, -d DIR   Working directory.
+  --version, -V                     Version info.
 ```
 
 ## Installation
@@ -65,7 +66,7 @@ cargo install o-o
 For each of `*.xlsm` files, extract vba source code from it, delete the first 5 lines, and save the code to a file with the same name but with the extension changed to `.vba`.
 
 ```
-ls *.xlsm | rargs -p '(.*)\.xlsm' o-o -p%% - '{1}'.vba - olevba -c '{0}' %% sed -e 1,5d
+ls *.xlsm | rargs -p '(.*)\.xlsm' o-o - '{1}'.vba - olevba -c '{0}' I sed -e 1,5d
 ```
 
 The above executes the following command line when there was a file named `foo.xlsm`, for example.

@@ -71,9 +71,9 @@ Options:
   <stdin>       File served as the standard input. `-` for no redirection.
   <stdout>      File served as the standard output. `-` for no redirection. `=` for the same file as the standard input. `.` for /dev/null.
   <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output. `.` for /dev/null.
-                Prefixing the file name with `+` will append to the file (same as `>>`).
+                Prefixing the file name with `+` will append to the file (`>>` in shell).
   -e VAR=VALUE                      Environment variables.
-  --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (that is, `|`).
+  --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (`|` in shell) [default: `I`].
   --force-overwrite, -F             Overwrite the file even when exit status != 0. Valid only when <stdout> is `=`.
   --working-directory=DIR, -d DIR   Working directory.
   --version, -V                     Version info.
@@ -151,7 +151,7 @@ impl Args<'_> {
                 }
                 _ => 0 // unknown flag/option 
             };
-    
+
             argv_index = next_index(&argv, argv_index, eat)?;
             if argv_index >= argv.len() {
                 break;
@@ -275,19 +275,16 @@ fn main() -> anyhow::Result<()> {
     let mut a = Args::parse(&argv)?;
 
     let mut sub_command_lines = Vec::<&[&str]>::new();
-    if let Some(p) = a.pipe_str {
-        let mut i = 0;
-        for j in 0..a.command_line.len() {
-            if a.command_line[j] == p && j > i {
-                sub_command_lines.push(&a.command_line[i..j]);
-                i = j + 1;
-            }
+    let p = a.pipe_str.unwrap_or("I");
+    let mut i = 0;
+    for j in 0..a.command_line.len() {
+        if a.command_line[j] == p && j > i {
+            sub_command_lines.push(&a.command_line[i..j]);
+            i = j + 1;
         }
-        if i < a.command_line.len() {
-            sub_command_lines.push(&a.command_line[i..]);
-        }
-    } else {
-        sub_command_lines.push(&a.command_line);
+    }
+    if i < a.command_line.len() {
+        sub_command_lines.push(&a.command_line[i..]);
     }
 
     if a.debug_info {
