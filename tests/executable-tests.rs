@@ -304,7 +304,12 @@ mod executable_tests {
 
     #[test]
     fn sequential_run_commands_sub_oo_invalid_option() -> Result<(), io::Error> {
+        const FILE_A: &str = "a.txt";
+
         let temp_dir = tempdir()?;
+
+        let file_a = temp_dir.path().join(FILE_A);
+        let _ = fs::write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
 
         let output = Command::new("./target/debug/o-o")
             .args([
@@ -315,8 +320,8 @@ mod executable_tests {
                 "-",
                 "-",
                 "-",
-                "echo",
-                "hoge",
+                "cat",
+                FILE_A,
                 "S",
                 "o-o",
                 "-s",
@@ -328,6 +333,46 @@ mod executable_tests {
             .output()?;
 
         assert!(output.status.code().unwrap() != 0);
+        Ok(())
+    }
+
+    #[test]
+    fn sub_oo_redirection() -> Result<(), io::Error> {
+        const FILE_A: &str = "a.txt";
+        const FILE_B: &str = "b.txt";
+
+        let temp_dir = tempdir()?;
+
+        let file_a = temp_dir.path().join(FILE_A);
+        let _ = fs::write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
+
+        let output = Command::new("./target/debug/o-o")
+            .args([
+                "-d",
+                SU(&temp_dir.path()),
+                "-s",
+                "S",
+                "-",
+                "-",
+                "-",
+                "cp",
+                FILE_A,
+                FILE_B,
+                "S",
+                "o-o",
+                FILE_B,
+                "-",
+                "-",
+                "wc",
+            ])
+            .output()?;
+
+        assert!(output.status.code().unwrap() == 0);
+
+        let output_contents = String::from_utf8(output.stdout).unwrap();
+        assert!(output_contents.trim().starts_with("3"));
+
+        temp_dir.close()?;
         Ok(())
     }
 
