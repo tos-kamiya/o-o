@@ -7,7 +7,7 @@ Enables commands that assume the standard input and output to read and write to 
 
 ## What? Why?
 
-Have you ever had trouble with interference between command-invoking command and redirect?
+Have you ever had trouble with interference between a command-invoking command and redirection?
 
 For example, a command line:
 
@@ -45,7 +45,8 @@ Options:
   <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output. `.` for /dev/null.
                 Prefixing the file name with `+` will append to the file (`>>` in shell).
   -e VAR=VALUE                      Environment variables.
-  --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (`|` in shell) [default: `I`].
+  --pipe=STR, -p STR                String for pipe to connect subprocesses (`|` in shell) [default: `I`].
+  --separator=STR, -s STR           String for separator of command lines (`;` in shell) [default: `J`].
   --tempdir-placeholder=STR, -t STR     Placeholder string for temporary directory [default: `T`].
   --force-overwrite, -F             Overwrite the file even when exit status != 0. Valid only when <stdout> is `=`.
   --working-directory=DIR, -d DIR   Working directory.
@@ -61,9 +62,9 @@ Use the cargo command to install.
 cargo install o-o
 ```
 
-## A Sample
+## Samples
 
-### Extract vba source code from Excel files.
+### Extract vba source code from Excel files
 
 For each of `*.xlsm` files, extract vba source code from it, delete the first 5 lines, and save the code to a file with the same name but with the extension changed to `.vba`.
 
@@ -91,4 +92,5 @@ MIT/Apache-2.0
 - [x] Reimplemented in Rust
 - [x] Testing `--force-overwrite`
 - [x] Enable handling of /dev/null
-- [x] Temporary directory feature
+- [x] Temporary directory (v0.4.0)
+- [x] Command-line separator (v0.4.0)
