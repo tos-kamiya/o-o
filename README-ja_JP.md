@@ -82,6 +82,26 @@ olevba -c foo.xlsm | sed -e 1,5d > foo.vba
 * [rargs](https://github.com/lotabout/rargs) は指定されたファイル名を与えてコマンドラインを実行するツールです（xargsに類似したツールです）。
 * [olevba](https://pypi.org/project/oletools/) はExcelのファイルからVBAのコードを抽出するツールです。
 
+### 動画ファイルの音声を文字起こしする
+
+動画ファイル`amovie.webm`から音声を抽出して一時ファイルに保存し、次に、その音声ファイルから文字起こしを行います。
+一時ファイルは一時ディレクトリ上に作成され、処理が終わった時点で削除されます。
+
+```sh
+o-o - - - ffmpeg -i amovie.webm T/tmp.wav J whisper T/tmp.wav --model=medium
+```
+
+上のコマンドラインは、一時ディレクトリを作成する点以外は、次のコマンドラインと同様です。
+
+```
+ffmpeg -i amovie.webm tmp.wav ; whisper tmp.wav --model=medium
+```
+
+このコマンドラインで、
+
+* [ffmpeg](https://ffmpeg.org/) は音声ファイルや動画ファイルを加工するツールです。
+* [whisper](https://github.com/openai/whisper) 音声ファイルからの文字起こしツールです。
+
 ## ライセンス
 
 MIT/Apache-2.0

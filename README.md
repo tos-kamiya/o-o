@@ -83,6 +83,26 @@ Here,
 * [rargs](https://github.com/lotabout/rargs) is a command that takes a filename and executes the specified command line, similar to xargs
 * [olevba](https://pypi.org/project/oletools/) is a command to extract vba code from an Excel file.
 
+### Transcribing audio from a video file
+
+Extract the audio from the video file `amovie.webm`, save it to a temporary audio file, and then extract text from the temporary audio file.
+The temporary file is created on a temporary directory and deleted when the process is finished.
+
+```sh
+o-o - - - ffmpeg -i amovie.webm T/tmp.wav J whisper T/tmp.wav --model=medium
+```
+
+The above command line is similar to the following command line, except for creating a temporary directory.
+
+```
+ffmpeg -i amovie.webm tmp.wav ; whisper tmp.wav --model=medium
+```
+
+Here,
+
+* [ffmpeg](https://ffmpeg.org/) is a tool for processing audio files and video files.
+* [whisper](https://github.com/openai/whisper) is a tool for transcribing text from audio files.
+
 ## License
 
 MIT/Apache-2.0
