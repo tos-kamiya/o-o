@@ -244,11 +244,11 @@ mod executable_tests {
                 SU(&temp_dir.path()),
                 "-p",
                 "P",
-                SU(&file_a),
+                "-",
                 "-",
                 "-",
                 "cat",
-                SU(&file_a),
+                FILE_A,
                 "P",
                 "wc",
                 "-l",
@@ -261,6 +261,73 @@ mod executable_tests {
         assert!(output_contents.find("3\n").is_some());
 
         temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn sequential_run_commands() -> Result<(), io::Error> {
+        const FILE_A: &str = "a.txt";
+        const FILE_B: &str = "b.txt";
+
+        let temp_dir = tempdir()?;
+
+        let file_a = temp_dir.path().join(FILE_A);
+        let _ = fs::write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
+
+        let output = Command::new("./target/debug/o-o")
+            .args([
+                "-d",
+                SU(&temp_dir.path()),
+                "-s",
+                "S",
+                "-",
+                "-",
+                "-",
+                "cp",
+                FILE_A,
+                FILE_B,
+                "S",
+                "wc",
+                "-l",
+                FILE_B,
+            ])
+            .output()?;
+
+        assert!(output.status.code().unwrap() == 0);
+
+        let output_contents = String::from_utf8(output.stdout).unwrap();
+        assert!(output_contents.trim().starts_with("3"));
+
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn sequential_run_commands_sub_oo_invalid_option() -> Result<(), io::Error> {
+        let temp_dir = tempdir()?;
+
+        let output = Command::new("./target/debug/o-o")
+            .args([
+                "-d",
+                SU(&temp_dir.path()),
+                "-s",
+                "S",
+                "-",
+                "-",
+                "-",
+                "echo",
+                "hoge",
+                "S",
+                "o-o",
+                "-s",
+                "%%",
+                "-",
+                "-",
+                "-",
+            ])
+            .output()?;
+
+        assert!(output.status.code().unwrap() != 0);
         Ok(())
     }
 
@@ -417,4 +484,5 @@ mod executable_tests {
         temp_dir.close()?;
         Ok(())
     }
+
 }

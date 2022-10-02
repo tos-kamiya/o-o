@@ -175,9 +175,11 @@ impl Args<'_> {
                 }
                 "-e" => {
                     let value = unwrap_argument(pr)?;
-                    let p = value
-                        .find('=')
-                        .expect("o-o: option -e's argument should be `VAR=VALUE`");
+                    let p = value.find('=');
+                    if p.is_none() {
+                        return Err(OOError::CLIError { message: format!("option -e's argument should be `VAR=VALUE`: {}", pr.0) }.into());
+                    }
+                    let p = p.unwrap();
                     args.envs.push((&value[..p], &value[p + 1..]));
                     2
                 }
@@ -228,6 +230,72 @@ impl Args<'_> {
 
         Ok(args)
     }
+}
+
+fn check_sub_oo_command_line<'s>(argv: &[&str]) -> anyhow::Result<()> {
+    let mut args_fds: Vec<&str> = vec![];
+    let mut args_command_line: Vec<&str> = vec![];
+
+    let argv = &argv[1..];
+    let mut argv_index = 0;
+    while args_fds.len() < 3 {
+        if args_fds.is_empty() && unpack_shorthand_args(&argv[argv_index]).is_some() {
+            return Ok(());
+        }
+        let pr = parse(argv, argv_index)?;
+        let eat = match pr.0 {
+            "-h" | "--help" |
+            "-V" | "--version" |
+            "-F" | "--force-overwrite" |
+            "--debug-info" |
+            "-p" | "--pipe" |
+            "-s" | "--separator" => {
+                return Err(OOError::CLIError { message: format!("invalid option in sub-command line: {}", pr.0) }.into())
+            }
+            "-e" => {
+                let value = unwrap_argument(pr)?;
+                let p = value.find('=');
+                if p.is_none() {
+                    return Err(OOError::CLIError { message: format!("option -e's argument should be `VAR=VALUE`: {}", pr.0) }.into());
+                }
+                2
+            }
+            "-d" | "--working-directory" => {
+                2
+            }
+            "-t" | "--tempdir-placeholder" => {
+                2
+            }
+            "--" => { // separator
+                while args_fds.len() < 3 {
+                    args_fds.push("-");
+                }
+                break;
+            }
+            a if is_argument(a) => { // argument
+                args_fds.push(a);
+                1
+            }
+            _ => 0 // unknown flag/option 
+        };
+
+        argv_index = next_index(argv, argv_index, eat)?;
+        if argv_index >= argv.len() {
+            break;
+        }
+    }
+    if argv_index < argv.len() {
+        if argv[argv_index] == "--" { // in case a redundant "--" is given as the 4th argument
+            argv_index += 1;
+        }
+        args_command_line.extend_from_slice(&argv[argv_index..]);
+    }
+
+    if args_command_line.is_empty() {
+        return Err(OOError::CLIError { message: "no command line specified".to_string() }.into())
+    }
+
+    Ok(())
 }
 
 fn do_validate_fds(fds: &[&str], force_overwrite: bool) -> std::result::Result<(), OOError> {
@@ -369,6 +437,24 @@ fn exec_pipeline(pl: &[Vec<String>], fds: &[&str], envs: &[(&str, &str)], workin
     Ok(())
 }
 
+fn pipeline_propagate_oo_options(pl: &[Vec<String>], pipe_str: &str, force_overwrite: bool) -> anyhow::Result<Vec<Vec<String>>> {
+    let argv: Vec<&str> = pl.get(0).unwrap().iter().map(|s| s.as_ref()).collect();
+    check_sub_oo_command_line(&argv)?;
+
+    let mut cml: Vec<String> = vec!["o-o".to_string()];
+    cml.push(format!("--pipe={}", pipe_str));
+    if force_overwrite {
+        cml.push("--force-overwrite".to_string());
+    }
+    cml.extend(pl.get(0).unwrap().get(1..).unwrap().iter().map(String::from));
+    for cmli in pl.get(1..).unwrap().iter() {
+        cml.push(pipe_str.to_string());
+        cml.extend(cmli.iter().map(String::from));
+    }
+
+    Ok(vec![cml])
+}
+
 fn main() -> anyhow::Result<()> {
     // Parse command-line arguments
     let argv0: Vec<String> = env::args().collect();
@@ -448,33 +534,20 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Exec 1st pipeline
-    let pl = pipelines.get(0).unwrap();
-    exec_pipeline(pl, &a.fds, &a.envs, &a.working_directory, a.force_overwrite)?;
+    let pl = pipelines.remove(0);
+    exec_pipeline(&pl, &a.fds, &a.envs, &a.working_directory, a.force_overwrite)?;
 
     // Exec 2nd or later pipeline
-    for pl in pipelines[1..].iter() {
-        // if the command of the first command-line of the pipeline is o-o, then re-construct the command line
+    let non_redirected_fds = vec!["-", "-", "-"];
+    for pl in pipelines.into_iter() {
         let cmd_is_oo = pl.get(0).unwrap().get(0).unwrap() == "o-o";
         let pl: Vec<Vec<String>> = if cmd_is_oo {
-            let mut cml: Vec<String> = vec!["o-o".to_string()];
-            cml.push(format!("--pipe={}", pipe_str));
-            cml.push("--separator=".to_string()); // Specify not to separate
-            cml.push("--tempdir-placeholder=".to_string()); // Specify do not prepare (yet another) temp dir
-            if a.force_overwrite {
-                cml.push("--force-overwrite".to_string());
-            }
-            cml.extend(pl.get(0).unwrap().get(1..).unwrap().iter().map(String::from));
-            for cmli in pl.get(1..).unwrap().iter() {
-                cml.push(pipe_str.to_string());
-                cml.extend(cmli.iter().map(String::from));
-            }
-            vec![cml]
+            pipeline_propagate_oo_options(&pl, pipe_str, a.force_overwrite)?
         } else {
-            pl.clone()
+            pl
         };
-        let fds = if cmd_is_oo { vec!["-", "-", "-"] } else { a.fds.clone() };
 
-        exec_pipeline(&pl, &fds, &a.envs, &a.working_directory, a.force_overwrite)?;
+        exec_pipeline(&pl, &non_redirected_fds, &a.envs, &a.working_directory, a.force_overwrite)?;
     }
 
     Ok(())
