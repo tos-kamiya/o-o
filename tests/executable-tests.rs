@@ -345,6 +345,7 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = fs::write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
+        let file_b = temp_dir.path().join(FILE_A);
 
         let output = Command::new("./target/debug/o-o")
             .args([
@@ -360,7 +361,7 @@ mod executable_tests {
                 FILE_B,
                 "S",
                 "o-o",
-                FILE_B,
+                SU(&file_b),
                 "-",
                 "-",
                 "wc",
