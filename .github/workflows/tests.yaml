@@ -27,6 +27,10 @@ jobs:
         override: true
     - name: Build
       run: cargo build
+    - name: Sleep to avoid flaky test
+      uses: GuillaumeFalourd/wait-sleep-action@v1
+      with:
+        time: '3'
     - name: Run tests
       run: cargo test
       continue-on-error: ${{ matrix.rust == 'nightly' }}
