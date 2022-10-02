@@ -94,7 +94,8 @@ Options:
   <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output. `.` for /dev/null.
                 Prefixing the file name with `+` will append to the file (`>>` in shell).
   -e VAR=VALUE                      Environment variables.
-  --pipe=STR, -p STR                Use the string for connecting sub-processes by pipe (`|` in shell) [default: `I`].
+  --pipe=STR, -p STR                String for pipe to connect subprocesses (`|` in shell) [default: `I`].
+  --separator=STR, -s STR           String for separator of command lines (`;` in shell) [default: `J`].
   --tempdir-placeholder=STR, -t STR     Placeholder string for temporary directory [default: `T`].
   --force-overwrite, -F             Overwrite the file even when exit status != 0. Valid only when <stdout> is `=`.
   --working-directory=DIR, -d DIR   Working directory.
@@ -111,6 +112,7 @@ struct Args<'s> {
     working_directory: Option<&'s str>,
     debug_info: bool,
     pipe_str: Option<&'s str>,
+    separator_str: Option<&'s str>,
     tempdir_placeholder: Option<&'s str>,
 }
 
@@ -124,6 +126,7 @@ impl Args<'_> {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            separator_str: None,
             tempdir_placeholder: None,
         };
 
@@ -169,6 +172,10 @@ impl Args<'_> {
                 }
                 "-p" | "--pipe"  => {
                     args.pipe_str = Some(unwrap_argument(pr)?);
+                    2
+                }
+                "-s" | "--separator"  => {
+                    args.separator_str = Some(unwrap_argument(pr)?);
                     2
                 }
                 "-t" | "--tempdir-placeholder" => {
@@ -227,7 +234,7 @@ fn do_validate_fds<'a>(fds: &'a [&'a str], force_overwrite: bool) -> std::result
         if fds[i] == "+-" || fds[i] == "+=" {
             return err("not possible to use `-` or `=` in combination with `+`");
         }
-        if fds[i] != "-" && fds[i] != "=" {
+        if !(fds[i] == "-" || fds[i] != "=" || fds[i] != ".") {
             for j in i + 1..fds.len() {
                 if split_append_flag(fds[j]).0 == split_append_flag(fds[i]).0 {
                     return err("explicitly use `=` when dealing with the same file");
@@ -299,7 +306,15 @@ macro_rules! exec_it {
     };
 }
 
+fn is_filename_like_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '-' || c == '.'
+}
+
 fn replace_tempdir_name(arg: &str, tempdir_placeholder: &str, temp_dir_str: &str) -> Option<String> {
+    if tempdir_placeholder.is_empty() {
+        return None
+    }
+
     let parts: Vec<&str> = arg.split(tempdir_placeholder).collect();
     let mut replaced_parts: Vec<String> = vec![];
     let mut replacement_occurs = false;
@@ -308,9 +323,8 @@ fn replace_tempdir_name(arg: &str, tempdir_placeholder: &str, temp_dir_str: &str
         let next = if i + 1 < parts.len() { parts[i + 1] } else { "" };
         let prev_last_char = if prev.is_empty() { ' ' } else { prev.chars().last().unwrap() };
         let next_first_char = if next.is_empty() { ' ' } else { next.chars().nth(0).unwrap() };
-        if !prev_last_char.is_ascii_alphanumeric() && next_first_char == '/' {
-            let replaced = format!("{}{}{}", prev, temp_dir_str, next);
-            replaced_parts.push(replaced);
+        if !is_filename_like_char(prev_last_char) && next_first_char == '/' {
+            replaced_parts.push(temp_dir_str.to_owned());
             replacement_occurs = true;
         } else {
             replaced_parts.push(parts[i].to_owned());
@@ -335,39 +349,40 @@ fn main() -> anyhow::Result<()> {
 
     let mut a = Args::parse(&argv)?;
 
-    let mut sub_command_lines = Vec::<&[&str]>::new();
-    let p = a.pipe_str.unwrap_or("I");
-    let mut i = 0;
-    for j in 0..a.command_line.len() {
-        if a.command_line[j] == p && j > i {
-            sub_command_lines.push(&a.command_line[i..j]);
-            i = j + 1;
-        }
-    }
-    if i < a.command_line.len() {
-        sub_command_lines.push(&a.command_line[i..]);
-    }
-
-    // Prepare temporary directory when tempdir-placeholder string is included in command line
-    let mut temp_dir: Option<TempDir> = None;
     let td_placeholder = a.tempdir_placeholder.unwrap_or("T");
+    let pipe_str = a.pipe_str.unwrap_or("I");
+    let separator_str = a.separator_str.unwrap_or("J");
+
+    // Split sub-commands and replace temporary-directory path
+    let mut pipelines: Vec<Vec<Vec<String>>> = vec![vec![vec![]]];
+    let mut temp_dir: Option<TempDir> = None;
     let mut tdrep_args: Vec<(&str, String)> = vec![];
-    let mut tdrep_sub_command_lines: Vec<Vec<String>> = vec![];
-    for i in 0..sub_command_lines.len() {
-        let scl = sub_command_lines[i];
-        tdrep_sub_command_lines.push(vec![]);
-        let tdrep_scl = tdrep_sub_command_lines.last_mut().unwrap();
-        for j in 0..scl.len() {
-            let arg = scl[j];
-            let r = replace_tempdir_name(arg, td_placeholder, "dummy");
-            if r.is_some() {
-                let td = temp_dir.get_or_insert_with(|| tempdir().unwrap());
-                let r = replace_tempdir_name(arg, td_placeholder, td.path().to_str().unwrap()).unwrap();
-                tdrep_args.push((arg, r.clone()));
-                tdrep_scl.push(r);
-            } else {
-                tdrep_scl.push(arg.to_string());
+    for arg in a.command_line.iter() {
+        if !separator_str.is_empty() && *arg == separator_str {
+            if pipelines.last().unwrap().is_empty() {
+                return Err(anyhow!("o-o: empty command line (unexpected separator)"));
             }
+            pipelines.push(vec![vec![]]);
+        } else if !pipe_str.is_empty() && *arg == pipe_str {
+            let pl = pipelines.last_mut().unwrap();
+            if pl.last().unwrap().is_empty() {
+                return Err(anyhow!("o-o: empty command line (unexpected pipe)"));
+            }
+            pl.push(vec![]);
+        } else {
+            // Replace temp-directory holder string to a real temp-directory path
+            let r = replace_tempdir_name(arg, td_placeholder, "dummy");
+            pipelines.last_mut().unwrap().last_mut().unwrap().push(
+                if r.is_some() {
+                    let td = temp_dir.get_or_insert_with(|| tempdir().unwrap());
+                    let td_path_str = td.path().to_str().unwrap();
+                    let r = replace_tempdir_name(arg, td_placeholder, td_path_str).unwrap();
+                    tdrep_args.push((arg, r.clone()));
+                    r
+                } else {
+                    arg.to_string()
+                }
+            );
         }
     }
 
@@ -382,7 +397,7 @@ fn main() -> anyhow::Result<()> {
 
         println!("");
         println!("target command lines:");
-        println!("{:?}", sub_command_lines);
+        println!("{:?}", pipelines);
 
         if !tdrep_args.is_empty() {
             println!("");
@@ -396,10 +411,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Validate command-line arguments
-    if a.command_line.is_empty() {
-        return Err(anyhow!("o-o: no command line specified"));
-    }
-
     do_validate_fds(&a.fds, a.force_overwrite)?;
 
     if a.fds[0] == "-" && a.fds[1] == "=" {
@@ -412,11 +423,11 @@ fn main() -> anyhow::Result<()> {
         stderr_sink = Some(Rc::new(f));
     }
 
-    // Invoke a sub-process
-    let mut execs: Vec<Exec> = tdrep_sub_command_lines
+    // Invoke the first pipeline
+    let mut execs: Vec<Exec> = pipelines.get(0).unwrap()
         .iter()
-        .map(|scl| {
-            let mut exec = Exec::cmd(&scl[0]).args(&scl[1..]);
+        .map(|cml| {
+            let mut exec = Exec::cmd(&cml[0]).args(&cml[1..]);
             if !a.envs.is_empty() {
                 exec = exec.env_extend(&a.envs);
             }
@@ -434,11 +445,11 @@ fn main() -> anyhow::Result<()> {
         }).collect();
 
     let exit_status = if execs.len() >= 2 {
-        let mut sp = Pipeline::from_exec_iter(execs);
-        exec_it!(sp, a.fds, a.force_overwrite)
+        let mut pl = Pipeline::from_exec_iter(execs);
+        exec_it!(pl, a.fds, a.force_overwrite)
     } else {
-        let mut sp = execs.pop().unwrap();
-        exec_it!(sp, a.fds, a.force_overwrite)
+        let mut pl = execs.pop().unwrap();
+        exec_it!(pl, a.fds, a.force_overwrite)
     }?;
 
     let success = matches!(exit_status, ExitStatus::Exited(0));
@@ -449,6 +460,65 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(code.try_into()?);
         } else {
             std::process::exit(1);
+        }
+    }
+
+    if let Some(ss) = stderr_sink {
+        drop(ss);
+    }
+
+    // Exec 2nd or later pipeline
+    for pl in pipelines[1..].iter() {
+        // if the command of the first command-line of the pipeline is o-o, then re-construct the command line
+        let cmd_is_oo = pl.get(0).unwrap().get(0).unwrap() == "o-o";
+        let pl: Vec<Vec<String>> = if cmd_is_oo {
+            let mut cml: Vec<String> = vec!["o-o".to_string()];
+            cml.push(format!("--pipe={}", pipe_str));
+            cml.push("--separator=".to_string()); // Specify not to separate
+            cml.push("--tempdir-placeholder=".to_string()); // Specify do not prepare (yet another) temp dir
+            if a.force_overwrite {
+                cml.push("--force-overwrite".to_string());
+            }
+            cml.extend(pl.get(0).unwrap().get(1..).unwrap().iter().map(String::from));
+            for cmli in pl.get(1..).unwrap().iter() {
+                cml.push(pipe_str.to_string());
+                cml.extend(cmli.iter().map(String::from));
+            }
+            vec![cml]
+        } else {
+            pl.clone()
+        };
+        let fds = if cmd_is_oo { vec!["-", "-", "-"] } else { a.fds.clone() };
+
+        let mut execs: Vec<Exec> = pl.iter()
+            .map(|cml| {
+                let mut exec = Exec::cmd(&cml[0]).args(&cml[1..]);
+                if !a.envs.is_empty() {
+                    exec = exec.env_extend(&a.envs);
+                }
+                if let Some(dir) = a.working_directory {
+                    exec = exec.cwd(dir);
+                }
+                exec
+            }).collect();
+
+        let exit_status = if execs.len() >= 2 {
+            let mut sp = Pipeline::from_exec_iter(execs);
+            exec_it!(sp, fds, a.force_overwrite)
+        } else {
+            let mut sp = execs.pop().unwrap();
+            exec_it!(sp, fds, a.force_overwrite)
+        }?;
+
+        let success = matches!(exit_status, ExitStatus::Exited(0));
+
+        if !success {
+            eprintln!("Error: o-o: {:?}", exit_status);
+            if let ExitStatus::Exited(code) = exit_status {
+                std::process::exit(code.try_into()?);
+            } else {
+                std::process::exit(1);
+            }
         }
     }
 
