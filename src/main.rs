@@ -117,7 +117,7 @@ struct Args<'s> {
 }
 
 impl Args<'_> {
-    fn parse<'s>(argv: &Vec<&'s str>) -> anyhow::Result<Args<'s>> {
+    fn parse<'s>(argv: &[&'s str]) -> anyhow::Result<Args<'s>> {
         let mut args = Args {
             fds: vec![],
             command_line: vec![],
@@ -133,14 +133,14 @@ impl Args<'_> {
         let argv = &argv[1..];
         let mut argv_index = 0;
         while args.fds.len() < 3 {
-            if args.fds.len() == 0 {
+            if args.fds.is_empty() {
                 if let Some(u) = unpack_shorthand_args(argv[argv_index]) {
                     args.fds = u;
                     argv_index += 1;
                     break; // while
                 }
             }
-            let pr = parse(&argv, argv_index)?;
+            let pr = parse(argv, argv_index)?;
             let eat = match pr.0 {
                 "-h" | "--help" => { // help
                     print!("{}", USAGE);
@@ -195,7 +195,7 @@ impl Args<'_> {
                 _ => 0 // unknown flag/option 
             };
 
-            argv_index = next_index(&argv, argv_index, eat)?;
+            argv_index = next_index(argv, argv_index, eat)?;
             if argv_index >= argv.len() {
                 break;
             }
@@ -217,7 +217,7 @@ impl Args<'_> {
 
 fn do_validate_fds<'a>(fds: &'a [&'a str], force_overwrite: bool) -> std::result::Result<(), OOError> {
     let err = |message: &str| {
-        Err(OOError::CLIError { message: message.to_string() }.into())
+        Err(OOError::CLIError { message: message.to_string() })
     };
 
     if fds.len() < 3 {
@@ -395,12 +395,12 @@ fn main() -> anyhow::Result<()> {
         println!("pipe = {:?}", a.pipe_str);
         println!("tempdir_placeholder = {:?}", a.tempdir_placeholder);
 
-        println!("");
+        println!();
         println!("target command lines:");
         println!("{:?}", pipelines);
 
         if !tdrep_args.is_empty() {
-            println!("");
+            println!();
             println!("tempdir-including arguments:");
             for tra in tdrep_args {
                 println!("{:?}", tra.0);
