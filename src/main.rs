@@ -4,10 +4,9 @@ extern crate anyhow;
 use std::env;
 use std::fs;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
 use std::rc::Rc;
 
-use anyhow::{Context};
+use anyhow::Context;
 use subprocess::{Exec, ExitStatus, NullFile, Pipeline, Redirection};
 use tempfile::{tempdir, TempDir};
 use thiserror::Error;
@@ -33,27 +32,6 @@ fn open_for_writing(file_name: &str) -> std::io::Result<File> {
     }
 }
 
-fn copy_to(mut src: File, mut dst: File) -> std::io::Result<()> {
-    let mut buf = [0; 64 * 1024];
-    loop {
-        match src.read(&mut buf)? {
-            0 => {
-                break;
-            }
-            n => {
-                let buf = &buf[..n];
-                dst.write_all(buf)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const NAME: &str = env!("CARGO_PKG_NAME");
-
-const STDOUT_TEMP: &str = "STDOUT_TEMP";
-
 fn unpack_shorthand_args(a: &str) -> Option<Vec<&'static str>> {
     if a.len() != 3 {
         return None;
@@ -74,6 +52,43 @@ fn unpack_shorthand_args(a: &str) -> Option<Vec<&'static str>> {
 
     return Some(v);
 }
+
+fn is_filename_like_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '-' || c == '.'
+}
+
+fn replace_tempdir_name(arg: &str, tempdir_placeholder: &str, temp_dir_str: &str) -> Option<String> {
+    if tempdir_placeholder.is_empty() {
+        return None
+    }
+
+    let parts: Vec<&str> = arg.split(tempdir_placeholder).collect();
+    let mut replaced_parts: Vec<String> = vec![];
+    let mut replacement_occurs = false;
+    for i in 0..parts.len() {
+        let prev = if i > 0 { parts[i - 1] } else { "" };
+        let next = if i + 1 < parts.len() { parts[i + 1] } else { "" };
+        let prev_last_char = if prev.is_empty() { ' ' } else { prev.chars().last().unwrap() };
+        let next_first_char = if next.is_empty() { ' ' } else { next.chars().nth(0).unwrap() };
+        if !is_filename_like_char(prev_last_char) && next_first_char == '/' {
+            replaced_parts.push(temp_dir_str.to_owned());
+            replacement_occurs = true;
+        } else {
+            replaced_parts.push(parts[i].to_owned());
+        }
+    }
+
+    if replacement_occurs {
+        Some(replaced_parts.join(""))
+    } else {
+        None
+    }
+}
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const NAME: &str = env!("CARGO_PKG_NAME");
+
+const STDOUT_TEMP: &str = "STDOUT_TEMP";
 
 #[derive(Error, Debug)]
 pub enum OOError {
@@ -215,7 +230,7 @@ impl Args<'_> {
     }
 }
 
-fn do_validate_fds<'a>(fds: &'a [&'a str], force_overwrite: bool) -> std::result::Result<(), OOError> {
+fn do_validate_fds(fds: &[&str], force_overwrite: bool) -> std::result::Result<(), OOError> {
     let err = |message: &str| {
         Err(OOError::CLIError { message: message.to_string() })
     };
@@ -306,36 +321,52 @@ macro_rules! exec_it {
     };
 }
 
-fn is_filename_like_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_' || c == '-' || c == '.'
-}
-
-fn replace_tempdir_name(arg: &str, tempdir_placeholder: &str, temp_dir_str: &str) -> Option<String> {
-    if tempdir_placeholder.is_empty() {
-        return None
+fn exec_pipeline(pl: &[Vec<String>], fds: &[&str], envs: &[(&str, &str)], working_directory: &Option<&str>, force_overwrite: bool) -> anyhow::Result<()> {
+    let mut stderr_sink: Option<Rc<File>> = None;
+    if !(fds[2] == "-" || fds[2] == "=" || fds[2] == ".") {
+        let f = open_for_writing(fds[2])?;
+        stderr_sink = Some(Rc::new(f));
     }
 
-    let parts: Vec<&str> = arg.split(tempdir_placeholder).collect();
-    let mut replaced_parts: Vec<String> = vec![];
-    let mut replacement_occurs = false;
-    for i in 0..parts.len() {
-        let prev = if i > 0 { parts[i - 1] } else { "" };
-        let next = if i + 1 < parts.len() { parts[i + 1] } else { "" };
-        let prev_last_char = if prev.is_empty() { ' ' } else { prev.chars().last().unwrap() };
-        let next_first_char = if next.is_empty() { ' ' } else { next.chars().nth(0).unwrap() };
-        if !is_filename_like_char(prev_last_char) && next_first_char == '/' {
-            replaced_parts.push(temp_dir_str.to_owned());
-            replacement_occurs = true;
+    let mut execs: Vec<Exec> = pl.iter()
+    .map(|cml| {
+        let mut exec = Exec::cmd(&cml[0]).args(&cml[1..]);
+        if !envs.is_empty() {
+            exec = exec.env_extend(envs);
+        }
+        if let Some(dir) = working_directory {
+            exec = exec.cwd(dir);
+        }
+        if let Some(ss) = &stderr_sink {
+            exec = exec.stderr(Redirection::RcFile(ss.clone()));
+        } else if fds[2] == "=" {
+            exec = exec.stderr(Redirection::Merge);
+        } else if fds[2] == "." {
+            exec = exec.stderr(NullFile);
+        }
+        exec
+    }).collect();
+
+    let exit_status = if execs.len() >= 2 {
+        let mut sp = Pipeline::from_exec_iter(execs);
+        exec_it!(sp, fds, force_overwrite)
+    } else {
+        let mut sp = execs.pop().unwrap();
+        exec_it!(sp, fds, force_overwrite)
+    }?;
+
+    let success = matches!(exit_status, ExitStatus::Exited(0));
+
+    if !success {
+        eprintln!("Error: o-o: {:?}", exit_status);
+        if let ExitStatus::Exited(code) = exit_status {
+            std::process::exit(code.try_into()?);
         } else {
-            replaced_parts.push(parts[i].to_owned());
+            std::process::exit(1);
         }
     }
 
-    if replacement_occurs {
-        Some(replaced_parts.join(""))
-    } else {
-        None
-    }
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -412,60 +443,13 @@ fn main() -> anyhow::Result<()> {
 
     // Validate command-line arguments
     do_validate_fds(&a.fds, a.force_overwrite)?;
-
     if a.fds[0] == "-" && a.fds[1] == "=" {
         a.fds[1] = "-";
     }
 
-    let mut stderr_sink: Option<Rc<File>> = None;
-    if a.fds[2] != "-" && a.fds[2] != "=" && a.fds[2] != "." {
-        let f = open_for_writing(a.fds[2])?;
-        stderr_sink = Some(Rc::new(f));
-    }
-
-    // Invoke the first pipeline
-    let mut execs: Vec<Exec> = pipelines.get(0).unwrap()
-        .iter()
-        .map(|cml| {
-            let mut exec = Exec::cmd(&cml[0]).args(&cml[1..]);
-            if !a.envs.is_empty() {
-                exec = exec.env_extend(&a.envs);
-            }
-            if let Some(dir) = a.working_directory {
-                exec = exec.cwd(dir);
-            }
-            if let Some(ss) = &stderr_sink {
-                exec = exec.stderr(Redirection::RcFile(ss.clone()));
-            } else if a.fds[2] == "=" {
-                exec = exec.stderr(Redirection::Merge);
-            } else if a.fds[2] == "." {
-                exec = exec.stderr(NullFile);
-            }
-            exec
-        }).collect();
-
-    let exit_status = if execs.len() >= 2 {
-        let mut pl = Pipeline::from_exec_iter(execs);
-        exec_it!(pl, a.fds, a.force_overwrite)
-    } else {
-        let mut pl = execs.pop().unwrap();
-        exec_it!(pl, a.fds, a.force_overwrite)
-    }?;
-
-    let success = matches!(exit_status, ExitStatus::Exited(0));
-
-    if !success {
-        eprintln!("Error: o-o: {:?}", exit_status);
-        if let ExitStatus::Exited(code) = exit_status {
-            std::process::exit(code.try_into()?);
-        } else {
-            std::process::exit(1);
-        }
-    }
-
-    if let Some(ss) = stderr_sink {
-        drop(ss);
-    }
+    // Exec 1st pipeline
+    let pl = pipelines.get(0).unwrap();
+    exec_pipeline(pl, &a.fds, &a.envs, &a.working_directory, a.force_overwrite)?;
 
     // Exec 2nd or later pipeline
     for pl in pipelines[1..].iter() {
@@ -490,43 +474,64 @@ fn main() -> anyhow::Result<()> {
         };
         let fds = if cmd_is_oo { vec!["-", "-", "-"] } else { a.fds.clone() };
 
-        let mut execs: Vec<Exec> = pl.iter()
-            .map(|cml| {
-                let mut exec = Exec::cmd(&cml[0]).args(&cml[1..]);
-                if !a.envs.is_empty() {
-                    exec = exec.env_extend(&a.envs);
-                }
-                if let Some(dir) = a.working_directory {
-                    exec = exec.cwd(dir);
-                }
-                exec
-            }).collect();
-
-        let exit_status = if execs.len() >= 2 {
-            let mut sp = Pipeline::from_exec_iter(execs);
-            exec_it!(sp, fds, a.force_overwrite)
-        } else {
-            let mut sp = execs.pop().unwrap();
-            exec_it!(sp, fds, a.force_overwrite)
-        }?;
-
-        let success = matches!(exit_status, ExitStatus::Exited(0));
-
-        if !success {
-            eprintln!("Error: o-o: {:?}", exit_status);
-            if let ExitStatus::Exited(code) = exit_status {
-                std::process::exit(code.try_into()?);
-            } else {
-                std::process::exit(1);
-            }
-        }
+        exec_pipeline(&pl, &fds, &a.envs, &a.working_directory, a.force_overwrite)?;
     }
 
     Ok(())
 }
 
 #[cfg(test)]
-mod argv_parse_test {
+mod fds_validate_test {
+    use super::*;
+
+    #[test]
+    fn missing_fds() {
+        let fds: Vec<&str> = vec!["a", "b"];
+        assert!(do_validate_fds(&fds, false).is_err());
+    }
+
+    #[test]
+    fn invalid_usage_of_plus() {
+        let fds: Vec<&str> = vec!["a", "b", "+="];
+        assert!(do_validate_fds(&fds, false).is_err());
+
+        let fds: Vec<&str> = vec!["a", "b", "+-"];
+        assert!(do_validate_fds(&fds, false).is_err());
+    }
+
+    #[test]
+    fn invalid_usage_of_equal() {
+        let fds: Vec<&str> = vec!["=", "b", "c"];
+        assert!(do_validate_fds(&fds, false).is_err());
+    }
+
+    #[test]
+    fn same_file_names() {
+        let fds: Vec<&str> = vec!["a", "a", "b"];
+        assert!(do_validate_fds(&fds, false).is_err());
+
+        let fds: Vec<&str> = vec!["a", "b", "a"];
+        assert!(do_validate_fds(&fds, false).is_err());
+
+        let fds: Vec<&str> = vec!["a", "b", "b"];
+        assert!(do_validate_fds(&fds, false).is_err());
+    }
+
+    #[test]
+    fn force_overwrite() {
+        let fds: Vec<&str> = vec!["a", "b", "c"];
+        assert!(do_validate_fds(&fds, true).is_err());
+
+        let fds: Vec<&str> = vec!["a", "=", "c"];
+        assert!(do_validate_fds(&fds, true).is_ok());
+
+        let fds: Vec<&str> = vec!["-", "=", "c"];
+        assert!(do_validate_fds(&fds, true).is_err());
+    }
+}
+
+#[cfg(test)]
+mod main_tests {
     use super::*;
 
     #[test]
@@ -695,55 +700,5 @@ mod argv_parse_test {
             separator_str: Some("%%"),
             tempdir_placeholder: None,
         });
-    }
-}
-
-#[cfg(test)]
-mod fds_validate_test {
-    use super::*;
-
-    #[test]
-    fn missing_fds() {
-        let fds: Vec<&str> = vec!["a", "b"];
-        assert!(do_validate_fds(&fds, false).is_err());
-    }
-
-    #[test]
-    fn invalid_usage_of_plus() {
-        let fds: Vec<&str> = vec!["a", "b", "+="];
-        assert!(do_validate_fds(&fds, false).is_err());
-
-        let fds: Vec<&str> = vec!["a", "b", "+-"];
-        assert!(do_validate_fds(&fds, false).is_err());
-    }
-
-    #[test]
-    fn invalid_usage_of_equal() {
-        let fds: Vec<&str> = vec!["=", "b", "c"];
-        assert!(do_validate_fds(&fds, false).is_err());
-    }
-
-    #[test]
-    fn same_file_names() {
-        let fds: Vec<&str> = vec!["a", "a", "b"];
-        assert!(do_validate_fds(&fds, false).is_err());
-
-        let fds: Vec<&str> = vec!["a", "b", "a"];
-        assert!(do_validate_fds(&fds, false).is_err());
-
-        let fds: Vec<&str> = vec!["a", "b", "b"];
-        assert!(do_validate_fds(&fds, false).is_err());
-    }
-
-    #[test]
-    fn force_overwrite() {
-        let fds: Vec<&str> = vec!["a", "b", "c"];
-        assert!(do_validate_fds(&fds, true).is_err());
-
-        let fds: Vec<&str> = vec!["a", "=", "c"];
-        assert!(do_validate_fds(&fds, true).is_ok());
-
-        let fds: Vec<&str> = vec!["-", "=", "c"];
-        assert!(do_validate_fds(&fds, true).is_err());
     }
 }
