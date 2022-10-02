@@ -1,7 +1,7 @@
 [package]
 name = "o-o"
 description = "Enables commands that assume the standard input and output to read and write to files specified in the command line."
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 authors = ["Toshihiro Kamiya <kamiya@mbj.nifty.com>"]
 license = "MIT/Apache-2.0"

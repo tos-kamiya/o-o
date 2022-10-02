@@ -234,7 +234,7 @@ fn do_validate_fds<'a>(fds: &'a [&'a str], force_overwrite: bool) -> std::result
         if fds[i] == "+-" || fds[i] == "+=" {
             return err("not possible to use `-` or `=` in combination with `+`");
         }
-        if !(fds[i] == "-" || fds[i] != "=" || fds[i] != ".") {
+        if !(fds[i] == "-" || fds[i] == "=" || fds[i] == ".") {
             for j in i + 1..fds.len() {
                 if split_append_flag(fds[j]).0 == split_append_flag(fds[i]).0 {
                     return err("explicitly use `=` when dealing with the same file");
@@ -548,6 +548,7 @@ mod argv_parse_test {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            separator_str: None,
             tempdir_placeholder: None,
         });
     }
@@ -565,6 +566,7 @@ mod argv_parse_test {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            separator_str: None,
             tempdir_placeholder: None,
         });
     }
@@ -582,6 +584,7 @@ mod argv_parse_test {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            separator_str: None,
             tempdir_placeholder: None,
         });
     }
@@ -599,6 +602,7 @@ mod argv_parse_test {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            separator_str: None,
             tempdir_placeholder: None,
         });
     }
@@ -616,6 +620,7 @@ mod argv_parse_test {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            separator_str: None,
             tempdir_placeholder: None,
         });
     }
@@ -633,12 +638,13 @@ mod argv_parse_test {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            separator_str: None,
             tempdir_placeholder: None,
         });
     }
 
     #[test]
-    fn parse_including_tempdir_option() {
+    fn parse_tempdir_option() {
         let argv: Vec<&str> = vec!["exec", "-t", "HOGE", "---", "cat", "HOGE/hoge.txt"];
         let a = Args::parse(&argv).unwrap();
 
@@ -650,7 +656,44 @@ mod argv_parse_test {
             working_directory: None,
             debug_info: false,
             pipe_str: None,
+            separator_str: None,
             tempdir_placeholder: Some("HOGE"),
+        });
+    }
+
+    #[test]
+    fn parse_pipe_str_option() {
+        let argv: Vec<&str> = vec!["exec", "--pipe", "%%", "---", "cat", "hoge.txt", "%%", "wc"];
+        let a = Args::parse(&argv).unwrap();
+
+        assert_eq!(a, Args { 
+            fds: vec!["-", "-", "-"],
+            command_line: vec!["cat", "hoge.txt", "%%", "wc"],
+            force_overwrite: false,
+            envs: vec![],
+            working_directory: None,
+            debug_info: false,
+            pipe_str: Some("%%"),
+            separator_str: None,
+            tempdir_placeholder: None,
+        });
+    }
+
+    #[test]
+    fn parse_separator_str_option() {
+        let argv: Vec<&str> = vec!["exec", "--separator", "%%", "---", "cat", "hoge.txt", "%%", "cat", "fuga.txt"];
+        let a = Args::parse(&argv).unwrap();
+
+        assert_eq!(a, Args { 
+            fds: vec!["-", "-", "-"],
+            command_line: vec!["cat", "hoge.txt", "%%", "cat", "fuga.txt"],
+            force_overwrite: false,
+            envs: vec![],
+            working_directory: None,
+            debug_info: false,
+            pipe_str: None,
+            separator_str: Some("%%"),
+            tempdir_placeholder: None,
         });
     }
 }
