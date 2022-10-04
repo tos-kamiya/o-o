@@ -5,6 +5,7 @@ use std::env;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::rc::Rc;
+use std::thread::yield_now;
 
 use anyhow::Context;
 use subprocess::{Exec, ExitStatus, NullFile, Pipeline, Redirection};
@@ -356,6 +357,8 @@ fn exec_pipeline(pl: &[Vec<String>], fds: &[&str], envs: &[(&str, &str)], workin
         let mut sp = execs.pop().unwrap();
         exec_it!(sp, fds, force_overwrite)
     }?;
+
+    yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
     let success = matches!(exit_status, ExitStatus::Exited(0));
 

@@ -6,6 +6,7 @@ mod executable_tests {
     use std::io;
     use std::path::Path;
     use std::process::Command;
+    use std::thread::yield_now;
 
     use tempfile::tempdir;
 
@@ -30,6 +31,7 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = fs::write(SU(&file_a), "file a.\n")?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let temp_file = temp_dir.path().join("ls-output.txt");
         let output = Command::new("./target/debug/o-o")
@@ -77,6 +79,7 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = fs::write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("./target/debug/o-o")
             .args([
@@ -107,6 +110,7 @@ mod executable_tests {
 
         let script = temp_dir.path().join(SCRIPT);
         let _ = fs::write(SU(&script), "echo \"stdout\" >&1\necho \"stderr\" >&2\n")?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let out_file = temp_dir.path().join("out.txt");
         let err_file = temp_dir.path().join("err.txt");
@@ -144,6 +148,7 @@ mod executable_tests {
 
         let script = temp_dir.path().join(SCRIPT);
         let _ = fs::write(SU(&script), "echo \"stdout\" >&1\necho \"stderr\" >&2\n")?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("./target/debug/o-o")
             .args([
@@ -173,6 +178,7 @@ mod executable_tests {
 
         let out_file = temp_dir.path().join("out.txt");
         let append_out_file = format!("+{}", SU(&out_file));
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let status1 = Command::new("./target/debug/o-o")
             .args([
@@ -216,6 +222,7 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = fs::write(SU(&file_a), "file a.\n")?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let status = Command::new("./target/debug/o-o")
             .args(["-d", SU(&temp_dir.path()), SU(&file_a), "=", "-", "wc"])
@@ -237,6 +244,7 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = fs::write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("./target/debug/o-o")
             .args([
@@ -273,6 +281,7 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = fs::write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("./target/debug/o-o")
             .args([
@@ -310,6 +319,7 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = fs::write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("./target/debug/o-o")
             .args([
@@ -345,6 +355,7 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = fs::write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
         let file_b = temp_dir.path().join(FILE_A);
 
         let output = Command::new("./target/debug/o-o")
@@ -392,6 +403,7 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = fs::write(SU(&file_a), "file a original contents\n")?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let status = Command::new("./target/debug/o-o")
             .args([
@@ -429,6 +441,7 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = fs::write(SU(&file_a), "file a original contents\n")?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let status = Command::new("./target/debug/o-o")
             .args([
@@ -453,13 +466,14 @@ mod executable_tests {
     }
 
     #[test]
-    fn envrionment_variable() -> Result<(), io::Error> {
+    fn environment_variable() -> Result<(), io::Error> {
         const SCRIPT: &str = "a_script.sh";
 
         let temp_dir = tempdir()?;
 
         let script = temp_dir.path().join(SCRIPT);
         let _ = fs::write(SU(&script), "echo $V\n")?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("./target/debug/o-o")
             .args([
@@ -512,6 +526,7 @@ mod executable_tests {
             SU(&script),
             "echo !!If you see this message, the test \"stderr_devnull\" failed.!! >&2\n",
         )?;
+        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("./target/debug/o-o")
             .args([
