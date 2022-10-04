@@ -371,6 +371,87 @@ fn exec_pipeline(pl: &[Vec<String>], fds: &[&str], envs: &[(&str, &str)], workin
     Ok(())
 }
 
+fn print_debug_info<S: AsRef<str>, T: AsRef<str>, U: AsRef<str>>(raw_args: &Args, pipelines : &[Vec<Vec<S>>], tempdir_replaced_arguments: &[(T, U)]) {
+    println!("fds = {:?}", raw_args.fds);
+    println!("command_line = {:?}", raw_args.command_line);
+    println!("force_overwrite = {:?}", raw_args.force_overwrite);
+    println!("envs = {:?}", raw_args.envs);
+    println!("working_directory = {:?}", raw_args.working_directory);
+    println!("pipe = {:?}", raw_args.pipe_str);
+    println!("tempdir_placeholder = {:?}", raw_args.tempdir_placeholder);
+
+    println!();
+    println!("target command lines:");
+    for pl in pipelines.iter() {
+        let mut buf = String::new();
+        for (i, cml) in pl.iter().enumerate() {
+            if i > 0 {
+                buf.push_str(" | ");
+            }
+            for (j, a) in cml.iter().enumerate() {
+                if j > 0 {
+                    buf.push_str(" ");
+                }
+                buf.push_str(a.as_ref());
+            }
+        }
+        println!("{:} ;", buf);
+    }
+
+    if !tempdir_replaced_arguments.is_empty() {
+        println!();
+        println!("tempdir-including arguments:");
+        for tra in tempdir_replaced_arguments {
+            println!("{:?}", tra.0.as_ref());
+        }
+    }
+}
+
+fn reform_pipeline_for_2nd_or_later_oo_command_line<'s>(pl: &'s Vec<Vec<String>>, a: &'s Args) -> anyhow::Result<(Vec<Vec<String>>, Args<'s>)> {
+    let err = |message: &str| {
+        Err(OOError::CLIError { message: message.to_string() }.into())
+    };
+
+    let pl0: Vec<&str> = pl.get(0).unwrap().iter().map(|s| s.as_ref()).collect();
+    let mut sub_a = Args::parse(&pl0)?;
+    if sub_a.debug_info {
+        return err("invalid option used in sub-command: --debug-info");
+    }
+    if sub_a.pipe_str.is_some() {
+        return err("invalid option used in sub-command: --pipe");
+    }
+    if sub_a.separator_str.is_some() {
+        return err("invalid option used in sub-command: --separator");
+    }
+    if sub_a.tempdir_placeholder.is_some() {
+        return err("invalid option used in sub-command: --tempdir-placeholder=");
+    }
+
+    do_validate_fds(&sub_a.fds, sub_a.force_overwrite)?;
+    if sub_a.fds[0] == "-" && sub_a.fds[1] == "=" {
+        sub_a.fds[1] = "-";
+    }
+
+    let mut sub_pl0: Vec<String> = vec![];
+    for a in sub_a.command_line.iter() {
+        sub_pl0.push(a.to_string());
+    }
+    let mut sub_pl: Vec<Vec<String>> = vec![sub_pl0];
+    sub_pl.extend_from_slice(&pl[1..]);
+
+    let mut envs: Vec<(&str, &str)> = vec![];
+    envs.extend_from_slice(&a.envs);
+    envs.extend_from_slice(&sub_a.envs);
+    sub_a.envs = envs;
+
+    if sub_a.working_directory.is_none() {
+        sub_a.working_directory = a.working_directory;
+    }
+    sub_a.force_overwrite = sub_a.force_overwrite || a.force_overwrite;
+
+    Ok((sub_pl, sub_a))
+}
+
 fn main() -> anyhow::Result<()> {
     // Parse command-line arguments
     let argv0: Vec<String> = env::args().collect();
@@ -420,26 +501,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     if a.debug_info {
-        println!("fds = {:?}", a.fds);
-        println!("command_line = {:?}", a.command_line);
-        println!("force_overwrite = {:?}", a.force_overwrite);
-        println!("envs = {:?}", a.envs);
-        println!("working_directory = {:?}", a.working_directory);
-        println!("pipe = {:?}", a.pipe_str);
-        println!("tempdir_placeholder = {:?}", a.tempdir_placeholder);
-
-        println!();
-        println!("target command lines:");
-        println!("{:?}", pipelines);
-
-        if !tdrep_args.is_empty() {
-            println!();
-            println!("tempdir-including arguments:");
-            for tra in tdrep_args {
-                println!("{:?}", tra.0);
-            }
-        }
-
+        print_debug_info(&a, &pipelines, &tdrep_args);
         return Ok(());
     }
 
@@ -455,51 +517,15 @@ fn main() -> anyhow::Result<()> {
 
     // Exec 2nd or later pipeline
     let non_redirected_fds = vec!["-", "-", "-"];
+    a.fds = non_redirected_fds; // The second and subsequent pipelines do not redirect unless you explicitly write the o-o command
     for pl in pipelines.into_iter() {
         let pl0: Vec<&str> = pl.get(0).unwrap().iter().map(|s| s.as_ref()).collect();
         let cmd_is_oo = !pl0.is_empty() && pl0[0] == "o-o";
         if cmd_is_oo {
-            // reform pipeline (parse o-o's options/arguments and remove o-o command itself)
-            let mut sub_a = Args::parse(&pl0)?;
-            if sub_a.debug_info {
-                return Err(anyhow!("o-o: invalid option used in sub-command: --debug-info"));
-            }
-            if sub_a.pipe_str.is_some() {
-                return Err(anyhow!("o-o: invalid option used in sub-command: --pipe"));
-            }
-            if sub_a.separator_str.is_some() {
-                return Err(anyhow!("o-o: invalid option used in sub-command: --separator"));
-            }
-            if sub_a.tempdir_placeholder.is_some() {
-                return Err(anyhow!("o-o: invalid option used in sub-command: --tempdir-placeholder="));
-            }
-
-            do_validate_fds(&sub_a.fds, sub_a.force_overwrite)?;
-            if sub_a.fds[0] == "-" && sub_a.fds[1] == "=" {
-                sub_a.fds[1] = "-";
-            }
-
-            let mut sub_pl0: Vec<String> = vec![];
-            for a in sub_a.command_line {
-                sub_pl0.push(a.to_string());
-            }
-            let mut sub_pl: Vec<Vec<String>> = vec![sub_pl0];
-            sub_pl.extend_from_slice(&pl[1..]);
-
-            let mut envs: Vec<(&str, &str)> = vec![];
-            envs.extend_from_slice(&a.envs);
-            envs.extend_from_slice(&sub_a.envs);
-            sub_a.envs = envs;
-
-            if sub_a.working_directory.is_none() {
-                sub_a.working_directory = a.working_directory;
-            }
-            sub_a.force_overwrite = sub_a.force_overwrite || a.force_overwrite;
-
-            // exec the pipeline
+            let (sub_pl, sub_a) = reform_pipeline_for_2nd_or_later_oo_command_line(&pl, &a)?;
             exec_pipeline(&sub_pl, &sub_a.fds, &sub_a.envs, &sub_a.working_directory, sub_a.force_overwrite)?;
         } else {
-            exec_pipeline(&pl, &non_redirected_fds, &a.envs, &a.working_directory, a.force_overwrite)?;
+            exec_pipeline(&pl, &a.fds, &a.envs, &a.working_directory, a.force_overwrite)?;
         }
     }
 
