@@ -64,7 +64,20 @@ cargo install o-o
 
 ## Samples
 
-### Extract vba source code from Excel files
+### 1. Extract the 5th line for each of PDF files
+
+When you know that a particular line of the PDF will contain the information you need, such as the title of a artcle.
+
+```
+ls *.pdf | rargs o-o - - - pdftotext '{0}' - I head -5 I tail -1
+```
+
+Here,
+
+* [rargs](https://github.com/lotabout/rargs) is a tool which takes a filename and executes the specified command line, similar to xargs
+* [pdftotext](https://github.com/jalan/pdftotext) is a tool to extract text from PDF file.
+
+### 2. Extract vba source code from Excel files
 
 For each of `*.xlsm` files, extract vba source code from it, delete the first 5 lines, and save the code to a file with the same name but with the extension changed to `.vba`.
 
@@ -80,10 +93,9 @@ olevba -c foo.xlsm | sed -e 1,5d > foo.vba
 
 Here,
 
-* [rargs](https://github.com/lotabout/rargs) is a command that takes a filename and executes the specified command line, similar to xargs
 * [olevba](https://pypi.org/project/oletools/) is a command to extract vba code from an Excel file.
 
-### Transcribing audio from a video file
+### 3. Transcribing audio from a video file
 
 Extract the audio from the video file `amovie.webm`, save it to a temporary audio file, and then extract text from the temporary audio file.
 The temporary file is created on a temporary directory and deleted when the process is finished.

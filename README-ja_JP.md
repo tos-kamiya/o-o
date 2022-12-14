@@ -63,7 +63,21 @@ cargo install o-o
 
 ## サンプル
 
-### エクセルファイルからVBAのコードを抽出する
+### 1. 各PDFファイルの5行目を抽出する
+
+PDFの特定の行が必要な情報（例えば、記事のタイトル）を含んでいるとわかっている場合に。
+
+```
+ls *.pdf | rargs o-o - - - pdftotext '{0}' - I head -5 I tail -1
+```
+
+このコマンドラインで、
+
+* [rargs](https://github.com/lotabout/rargs) は指定されたファイル名を与えてコマンドラインを実行するツールです（xargsに類似したツールです）。
+* [pdftotext](https://github.com/jalan/pdftotext) PDFファイルからテキストを抽出するツールです。
+
+
+### 2. エクセルファイルからVBAのコードを抽出する
 
 それぞれの`*.xlsm`ファイルからVBAのコードを収集津市、最初の5行を削除し、拡張子を`.vba`に変更したファイルに保存する。
 
@@ -79,10 +93,9 @@ olevba -c foo.xlsm | sed -e 1,5d > foo.vba
 
 このコマンドラインで、
 
-* [rargs](https://github.com/lotabout/rargs) は指定されたファイル名を与えてコマンドラインを実行するツールです（xargsに類似したツールです）。
 * [olevba](https://pypi.org/project/oletools/) はExcelのファイルからVBAのコードを抽出するツールです。
 
-### 動画ファイルの音声を文字起こしする
+### 3. 動画ファイルの音声を文字起こしする
 
 動画ファイル`amovie.webm`から音声を抽出して一時ファイルに保存し、次に、その音声ファイルから文字起こしを行います。
 一時ファイルは一時ディレクトリ上に作成され、処理が終わった時点で削除されます。
