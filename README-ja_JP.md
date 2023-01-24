@@ -1,5 +1,3 @@
-![test workflow](https://github.com/tos-kamiya/o-o/workflows/Tests/badge.svg)
-
 o-o
 ===
 
