@@ -18,6 +18,7 @@ tempfile = "3"
 anyhow = "1.0"
 ng-clp = "0.3"
 thiserror = "1.0"
+remove_dir_all = ">0.8.0"
 
 [profile.release]
 lto = true
