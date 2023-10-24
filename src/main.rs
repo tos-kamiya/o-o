@@ -97,7 +97,7 @@ pub enum OOError {
     CLIError { message: String },
 }
 
-const USAGE: &str = "Start a sub-process and redirect its standard I/O's.
+const USAGE: &str = "Run a sub-process and customize how it handles standard I/O.
 
 Usage:
   o-o [options] <stdin> <stdout> <stderr> [--] <commandline>...
@@ -105,18 +105,19 @@ Usage:
   o-o --version
 
 Options:
-  <stdin>       File served as the standard input. `-` for no redirection.
-  <stdout>      File served as the standard output. `-` for no redirection. `=` for the same file as the standard input. `.` for /dev/null.
-  <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output. `.` for /dev/null.
-                Prefixing the file name with `+` will append to the file (`>>` in shell).
-  -e VAR=VALUE                      Environment variables.
+  <stdin>       File served as the standard input. Use `-` for no redirection.
+  <stdout>      File served as the standard output. Use `-` for no redirection, `=` for the same file as the standard input, and `.` for /dev/null.
+  <stderr>      File served as the standard error. Use `-` for no redirection, `=` for the same file as the standard output, and `.` for /dev/null.
+                Prefix with `+` to append to the file (akin to the `>>` redirection in shell).
+  -e VAR=VALUE                      Set environment variables.
   --pipe=STR, -p STR                String for pipe to connect subprocesses (`|` in shell) [default: `I`].
   --separator=STR, -s STR           String for separator of command lines (`;` in shell) [default: `J`].
   --tempdir-placeholder=STR, -t STR     Placeholder string for temporary directory [default: `T`].
-  --force-overwrite, -F             Overwrite the file even when exit status != 0. Valid only when <stdout> is `=`.
+  --force-overwrite, -F             Overwrite the file even if subprocess fails (exit status != 0). Valid only when <stdout> is `=`.
+  --keep-going, -k                  Only effective when multiple command lines are chained with the separator. Even if one command line fails, subsequent command lines continue to be executed.
   --working-directory=DIR, -d DIR   Working directory.
-  --version, -V                     Version info.
-  --help, -h                        Help message.
+  --version, -V                     Version information.
+  --help, -h                        Shows this help message.
 ";
 
 #[derive(Debug, PartialEq)]
@@ -126,6 +127,7 @@ struct Args<'s> {
     force_overwrite: bool,
     envs: Vec<(&'s str, &'s str)>,
     working_directory: Option<&'s str>,
+    keep_going: bool,
     debug_info: bool,
     pipe_str: Option<&'s str>,
     separator_str: Option<&'s str>,
@@ -140,6 +142,7 @@ impl Args<'_> {
             force_overwrite: false,
             envs: vec![],
             working_directory: None,
+            keep_going: false,
             debug_info: false,
             pipe_str: None,
             separator_str: None,
@@ -168,6 +171,10 @@ impl Args<'_> {
                 }
                 "-F" | "--force-overwrite" => {
                     args.force_overwrite = true;
+                    1
+                }
+                "-k" | "--keep-going" => {
+                    args.keep_going = true;
                     1
                 }
                 "--debug-info" => {
@@ -324,7 +331,7 @@ macro_rules! exec_it {
     };
 }
 
-fn exec_pipeline(pl: &[Vec<String>], fds: &[&str], envs: &[(&str, &str)], working_directory: &Option<&str>, force_overwrite: bool) -> anyhow::Result<()> {
+fn exec_pipeline(pl: &[Vec<String>], fds: &[&str], envs: &[(&str, &str)], working_directory: &Option<&str>, force_overwrite: bool) -> anyhow::Result<u32> {
     let mut stderr_sink: Option<Rc<File>> = None;
     if !(fds[2] == "-" || fds[2] == "=" || fds[2] == ".") {
         let f = open_for_writing(fds[2])?;
@@ -358,26 +365,24 @@ fn exec_pipeline(pl: &[Vec<String>], fds: &[&str], envs: &[(&str, &str)], workin
         exec_it!(sp, fds, force_overwrite)
     }?;
 
-    yield_now(); // force occurs a context switch, with hoping to complete file IOs
+    yield_now(); // force occurs a context switch, hoping completion of file IOs
 
-    let success = matches!(exit_status, ExitStatus::Exited(0));
-
-    if !success {
-        eprintln!("Error: o-o: {:?}", exit_status);
+    return if matches!(exit_status, ExitStatus::Exited(0)) {
+        Ok(0)
+    } else {
         if let ExitStatus::Exited(code) = exit_status {
-            std::process::exit(code.try_into()?);
+            Ok(code)
         } else {
-            std::process::exit(1);
+            Ok(1)
         }
     }
-
-    Ok(())
 }
 
 fn print_debug_info<S: AsRef<str>, T: AsRef<str>, U: AsRef<str>>(raw_args: &Args, pipelines : &[Vec<Vec<S>>], tempdir_replaced_arguments: &[(T, U)]) {
     println!("fds = {:?}", raw_args.fds);
     println!("command_line = {:?}", raw_args.command_line);
     println!("force_overwrite = {:?}", raw_args.force_overwrite);
+    println!("keep_going = {:?}", raw_args.keep_going);
     println!("envs = {:?}", raw_args.envs);
     println!("working_directory = {:?}", raw_args.working_directory);
     println!("pipe = {:?}", raw_args.pipe_str);
@@ -516,7 +521,10 @@ fn main() -> anyhow::Result<()> {
 
     // Exec 1st pipeline
     let pl = pipelines.remove(0);
-    exec_pipeline(&pl, &a.fds, &a.envs, &a.working_directory, a.force_overwrite)?;
+    let mut exit_code = exec_pipeline(&pl, &a.fds, &a.envs, &a.working_directory, a.force_overwrite)?;
+    if ! a.keep_going && exit_code != 0 {
+        std::process::exit(exit_code.try_into()?);
+    }
 
     // Exec 2nd or later pipeline
     let non_redirected_fds = vec!["-", "-", "-"];
@@ -524,12 +532,18 @@ fn main() -> anyhow::Result<()> {
     for pl in pipelines.into_iter() {
         let pl0: Vec<&str> = pl.get(0).unwrap().iter().map(|s| s.as_ref()).collect();
         let cmd_is_oo = !pl0.is_empty() && pl0[0] == "o-o";
-        if cmd_is_oo {
+        exit_code = if cmd_is_oo {
             let (sub_pl, sub_a) = reform_pipeline_for_2nd_or_later_oo_command_line(&pl, &a)?;
-            exec_pipeline(&sub_pl, &sub_a.fds, &sub_a.envs, &sub_a.working_directory, sub_a.force_overwrite)?;
+            exec_pipeline(&sub_pl, &sub_a.fds, &sub_a.envs, &sub_a.working_directory, sub_a.force_overwrite)?
         } else {
-            exec_pipeline(&pl, &a.fds, &a.envs, &a.working_directory, a.force_overwrite)?;
+            exec_pipeline(&pl, &a.fds, &a.envs, &a.working_directory, a.force_overwrite)?
+        };
+        if ! a.keep_going && exit_code != 0 {
+            std::process::exit(exit_code.try_into()?);
         }
+    }
+    if exit_code != 0 {
+        std::process::exit(exit_code.try_into()?);
     }
 
     Ok(())
@@ -604,6 +618,7 @@ mod main_tests {
             fds: vec!["a", "b", "c"],
             command_line: vec!["cmd"],
             force_overwrite: false,
+            keep_going: false,
             envs: vec![],
             working_directory: None,
             debug_info: false,
@@ -622,6 +637,7 @@ mod main_tests {
             fds: vec!["a", "b", "-"],
             command_line: vec!["cmd"],
             force_overwrite: false,
+            keep_going: false,
             envs: vec![],
             working_directory: None,
             debug_info: false,
@@ -640,6 +656,7 @@ mod main_tests {
             fds: vec!["a", "-", "-"],
             command_line: vec!["cmd"],
             force_overwrite: false,
+            keep_going: false,
             envs: vec![],
             working_directory: None,
             debug_info: false,
@@ -658,6 +675,7 @@ mod main_tests {
             fds: vec!["-", "-", "-"],
             command_line: vec!["cmd"],
             force_overwrite: false,
+            keep_going: false,
             envs: vec![],
             working_directory: None,
             debug_info: false,
@@ -676,6 +694,7 @@ mod main_tests {
             fds: vec!["-", "-", "-"],
             command_line: vec!["cmd"],
             force_overwrite: false,
+            keep_going: false,
             envs: vec![],
             working_directory: None,
             debug_info: false,
@@ -694,6 +713,7 @@ mod main_tests {
             fds: vec!["-", "-", "-"],
             command_line: vec!["cat", "T/hoge.txt"],
             force_overwrite: false,
+            keep_going: false,
             envs: vec![],
             working_directory: None,
             debug_info: false,
@@ -712,6 +732,7 @@ mod main_tests {
             fds: vec!["-", "-", "-"],
             command_line: vec!["cat", "HOGE/hoge.txt"],
             force_overwrite: false,
+            keep_going: false,
             envs: vec![],
             working_directory: None,
             debug_info: false,
@@ -730,6 +751,7 @@ mod main_tests {
             fds: vec!["-", "-", "-"],
             command_line: vec!["cat", "hoge.txt", "%%", "wc"],
             force_overwrite: false,
+            keep_going: false,
             envs: vec![],
             working_directory: None,
             debug_info: false,
@@ -748,6 +770,7 @@ mod main_tests {
             fds: vec!["-", "-", "-"],
             command_line: vec!["cat", "hoge.txt", "%%", "cat", "fuga.txt"],
             force_overwrite: false,
+            keep_going: false,
             envs: vec![],
             working_directory: None,
             debug_info: false,
