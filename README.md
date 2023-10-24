@@ -30,7 +30,7 @@ The `o-o` arguments are the standard input, standard output, and standard error 
 If you specify `-` as the file name for standard input, etc., it will not be redirected. Putting `+` in front of a file name will open the file in append mode.
 
 ```
-Start a sub-process and redirect its standard I/O's.
+Run a sub-process and customize how it handles standard I/O.
 
 Usage:
   o-o [options] <stdin> <stdout> <stderr> [--] <commandline>...
@@ -38,18 +38,19 @@ Usage:
   o-o --version
 
 Options:
-  <stdin>       File served as the standard input. `-` for no redirection.
-  <stdout>      File served as the standard output. `-` for no redirection. `=` for the same file as the standard input. `.` for /dev/null.
-  <stderr>      File served as the standard error. `-` for no redirection. `=` for the same file as the standard output. `.` for /dev/null.
-                Prefixing the file name with `+` will append to the file (`>>` in shell).
-  -e VAR=VALUE                      Environment variables.
+  <stdin>       File served as the standard input. Use `-` for no redirection.
+  <stdout>      File served as the standard output. Use `-` for no redirection, `=` for the same file as the standard input, and `.` for /dev/null.
+  <stderr>      File served as the standard error. Use `-` for no redirection, `=` for the same file as the standard output, and `.` for /dev/null.
+                Prefix with `+` to append to the file (akin to the `>>` redirection in shell).
+  -e VAR=VALUE                      Set environment variables.
   --pipe=STR, -p STR                String for pipe to connect subprocesses (`|` in shell) [default: `I`].
   --separator=STR, -s STR           String for separator of command lines (`;` in shell) [default: `J`].
   --tempdir-placeholder=STR, -t STR     Placeholder string for temporary directory [default: `T`].
-  --force-overwrite, -F             Overwrite the file even when exit status != 0. Valid only when <stdout> is `=`.
+  --force-overwrite, -F             Overwrite the file even if subprocess fails (exit status != 0). Valid only when <stdout> is `=`.
+  --keep-going, -k                  Only effective when multiple command lines are chained with the separator. Even if one command line fails, subsequent command lines continue to be executed.
   --working-directory=DIR, -d DIR   Working directory.
-  --version, -V                     Version info.
-  --help, -h                        Help message.
+  --version, -V                     Version information.
+  --help, -h                        Shows this help message.
 ```
 
 ## Installation
@@ -64,7 +65,7 @@ cargo install o-o
 
 ### 1. Extract the 5th line for each of PDF files
 
-When you know that a particular line of the PDF will contain the information you need, such as the title of a artcle.
+When you know that a particular line of the PDF will contain the information you need, such as the title of a article.
 
 ```
 ls *.pdf | rargs o-o - - - pdftotext '{0}' - I head -5 I tail -1
