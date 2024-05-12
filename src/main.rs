@@ -2,15 +2,14 @@
 extern crate anyhow;
 
 use std::env;
-use std::fs;
-use std::fs::{File, OpenOptions};
-use std::rc::Rc;
+use std::fs::{self, OpenOptions};
 use std::thread::yield_now;
 
-use anyhow::Context;
-use subprocess::{Exec, ExitStatus, NullFile, Pipeline, Redirection};
-use tempfile::{tempdir, TempDir};
+use anyhow::Result;
 use thiserror::Error;
+
+use duct::cmd;
+use tempfile::{tempdir, TempDir};
 
 use ng_clp::{is_argument, next_index, parse, unwrap_argument};
 
@@ -21,15 +20,6 @@ fn split_append_flag(file_name: &str) -> (&str, bool) {
         (stripped, true)
     } else {
         (file_name, false)
-    }
-}
-
-fn open_for_writing(file_name: &str) -> std::io::Result<File> {
-    let (f, a) = split_append_flag(file_name);
-    if a {
-        OpenOptions::new().create(true).append(true).open(f)
-    } else {
-        File::create(f)
     }
 }
 
@@ -88,8 +78,6 @@ fn replace_tempdir_name(arg: &str, tempdir_placeholder: &str, temp_dir_str: &str
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const NAME: &str = env!("CARGO_PKG_NAME");
-
-const STDOUT_TEMP: &str = "STDOUT_TEMP";
 
 #[derive(Error, Debug)]
 pub enum OOError {
@@ -284,97 +272,88 @@ fn do_validate_fds(fds: &[&str], force_overwrite: bool) -> std::result::Result<(
     Ok(())
 }
 
-macro_rules! exec_it {
-    ( $sp:ident, $fds:expr, $force_overwrite:expr ) => {
-        (|| -> anyhow::Result<ExitStatus> {
-            if $fds[0] != "-" {
-                let fname = split_append_flag(&$fds[0]).0;
-                let f = File::open(fname).with_context(|| format!("o-o: fail to open: {}", fname))?;
-                $sp = $sp.stdin(f);
-            }
+fn run_pipeline(commands: &Vec<Vec<String>>, fds: &Vec<&str>, envs: &[(&str, &str)], working_directory: &Option<&str>,
+        force_overwrite: bool, tempdir_placeholder: &Option<&str>) -> Result<i32> {
+    let mut pipeline: Option<duct::Expression> = None;
 
-            let mut temp_dir: Option<TempDir> = None;
-            if $fds[1] == "=" {
-                let dir = tempdir()?;
-                let f = File::create(dir.path().join(STDOUT_TEMP))?;
-                temp_dir = Some(dir);
-                $sp = $sp.stdout(f);
-            } else if $fds[1] == "." {
-                $sp = $sp.stdout(NullFile);
-            } else if $fds[1] != "-" {
-                let f = open_for_writing(&$fds[1])?;
-                $sp = $sp.stdout(f);
-            }
+    for command in commands {
+        let mut duct_cmd = cmd(&command[0], &command[1..]);
 
-            let exit_status = $sp.join()?;
-            let success = matches!(exit_status, ExitStatus::Exited(0));
+        if let Some(ref dir) = working_directory {
+            duct_cmd = duct_cmd.dir(dir);
+        }
 
-            if let Some(dir) = temp_dir {
-                let temp_file = dir.path().join(STDOUT_TEMP);
-                let (f, a) = split_append_flag(&$fds[0]);
-                if success || $force_overwrite {
-                    if a {
-                        let dst = open_for_writing(&$fds[0])?;
-                        let src = File::open(temp_file)?;
-                        copy_to(src, dst)?;
-                    } else {
-                        fs::rename(temp_file, f)?;
-                    }
-                } else if !success {
-                    eprintln!("Warning: exit code != 0. Not overwrite the file: {}", f);
-                }
-                dir.close()?;
-            }
+        for &(key, value) in envs {
+            duct_cmd = duct_cmd.env(key, value);
+        }
 
-            Ok(exit_status)
-        })()
-    };
-}
-
-fn exec_pipeline(pl: &[Vec<String>], fds: &[&str], envs: &[(&str, &str)], working_directory: &Option<&str>, force_overwrite: bool) -> anyhow::Result<u32> {
-    let mut stderr_sink: Option<Rc<File>> = None;
-    if !(fds[2] == "-" || fds[2] == "=" || fds[2] == ".") {
-        let f = open_for_writing(fds[2])?;
-        stderr_sink = Some(Rc::new(f));
+        if let Some(existing_pipeline) = pipeline {
+            pipeline = Some(existing_pipeline.pipe(duct_cmd));
+        } else {
+            pipeline = Some(duct_cmd);
+        }
     }
 
-    let mut execs: Vec<Exec> = pl.iter()
-    .map(|cml| {
-        let mut exec = Exec::cmd(&cml[0]).args(&cml[1..]);
-        if !envs.is_empty() {
-            exec = exec.env_extend(envs);
-        }
-        if let Some(dir) = working_directory {
-            exec = exec.cwd(dir);
-        }
-        if let Some(ss) = &stderr_sink {
-            exec = exec.stderr(Redirection::RcFile(ss.clone()));
-        } else if fds[2] == "=" {
-            exec = exec.stderr(Redirection::Merge);
-        } else if fds[2] == "." {
-            exec = exec.stderr(NullFile);
-        }
-        exec
-    }).collect();
+    if let Some(mut final_pipeline) = pipeline {
+        let mut temp_file_path = None;
 
-    let exit_status = if execs.len() >= 2 {
-        let mut sp = Pipeline::from_exec_iter(execs);
-        exec_it!(sp, fds, force_overwrite)
+        if fds[0] != "-" {
+            let file = OpenOptions::new().read(true).open(fds[0])?;
+            final_pipeline = final_pipeline.stdin_file(file);
+        }
+
+        match fds[1] {
+            "=" => {
+                let t = create_temp_file(tempdir_placeholder)?;
+                temp_file_path = Some(t.clone());
+                final_pipeline = final_pipeline.stdout_path(&t);
+            }
+            "." => {
+                final_pipeline = final_pipeline.stdout_null();
+            }
+            "-" => {
+            }
+            _ => {
+                let file = open_file_with_mode(fds[1])?;
+                final_pipeline = final_pipeline.stdout_file(file);
+            }
+        }
+
+        match fds[2] {
+            "=" => {
+                final_pipeline = final_pipeline.stderr_to_stdout();
+            }
+            "." => {
+                final_pipeline = final_pipeline.stderr_null();
+            }
+            "-" => {
+            }
+            _ => {
+                let file = open_file_with_mode(fds[2])?;
+                final_pipeline = final_pipeline.stderr_file(file);
+            }
+        }
+
+        let output = final_pipeline.unchecked().run()?;
+
+        yield_now(); // force occurs a context switch, hoping completion of file IOs
+
+        let status = output.status;
+        if status.success() || force_overwrite {
+            if let Some(temp_file) = temp_file_path {
+                fs::remove_file(fds[0])?;
+                if temp_file.exists() {
+                    fs::rename(&temp_file, fds[0])?;
+                } else {
+                    let file = OpenOptions::new().write(true).open(fds[0])?;
+                    file.set_len(0)?;
+                }
+            }
+        }
+
+        Ok(status.code().unwrap())
     } else {
-        let mut sp = execs.pop().unwrap();
-        exec_it!(sp, fds, force_overwrite)
-    }?;
-
-    yield_now(); // force occurs a context switch, hoping completion of file IOs
-
-    return if matches!(exit_status, ExitStatus::Exited(0)) {
-        Ok(0)
-    } else {
-        if let ExitStatus::Exited(code) = exit_status {
-            Ok(code)
-        } else {
-            Ok(1)
-        }
+        Err(anyhow::anyhow!("No command to execute"))
     }
 }
 
@@ -521,9 +500,10 @@ fn main() -> anyhow::Result<()> {
 
     // Exec 1st pipeline
     let pl = pipelines.remove(0);
-    let mut exit_code = exec_pipeline(&pl, &a.fds, &a.envs, &a.working_directory, a.force_overwrite)?;
+    let mut exit_code = run_pipeline(&pl, &a.fds, &a.envs, &a.working_directory, 
+        a.force_overwrite, &a.tempdir_placeholder)?;
     if ! a.keep_going && exit_code != 0 {
-        std::process::exit(exit_code.try_into()?);
+        std::process::exit(exit_code);
     }
 
     // Exec 2nd or later pipeline
@@ -534,16 +514,18 @@ fn main() -> anyhow::Result<()> {
         let cmd_is_oo = !pl0.is_empty() && pl0[0] == "o-o";
         exit_code = if cmd_is_oo {
             let (sub_pl, sub_a) = reform_pipeline_for_2nd_or_later_oo_command_line(&pl, &a)?;
-            exec_pipeline(&sub_pl, &sub_a.fds, &sub_a.envs, &sub_a.working_directory, sub_a.force_overwrite)?
+            run_pipeline(&sub_pl, &sub_a.fds, &sub_a.envs, &sub_a.working_directory,
+                a.force_overwrite, &a.tempdir_placeholder)?
         } else {
-            exec_pipeline(&pl, &a.fds, &a.envs, &a.working_directory, a.force_overwrite)?
+            run_pipeline(&pl, &a.fds, &a.envs, &a.working_directory,
+                a.force_overwrite, &a.tempdir_placeholder)?
         };
         if ! a.keep_going && exit_code != 0 {
-            std::process::exit(exit_code.try_into()?);
+            std::process::exit(exit_code);
         }
     }
     if exit_code != 0 {
-        std::process::exit(exit_code.try_into()?);
+        std::process::exit(exit_code);
     }
 
     Ok(())

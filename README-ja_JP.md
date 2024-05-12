@@ -118,10 +118,3 @@ ffmpeg -i amovie.webm tmp.wav ; whisper tmp.wav --model=medium
 
 MIT/Apache-2.0
 
-## Todos
-
-- [x] Rustで再実装
-- [x] `--force-overwrite`のテスト
-- [x] /dev/nullを扱えるようにする
-- [x] 一時ディレクトリ機能 (v0.4.0)
-- [x] コマンドラインセパレータ (v0.4.0)

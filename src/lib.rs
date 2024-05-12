@@ -1,41 +1,48 @@
-use std::fs::File;
-use std::io::{Read, Write};
-use subprocess::{Exec, Redirection};
+use std::fs::{File, OpenOptions};
+use std::path::PathBuf;
 
-// #[cfg(windows)]
-// pub fn command_exists(cmd: &str) -> bool {
-//     let output = Exec::cmd("cmd").arg("/c").arg("where").arg(cmd)
-//         .stdout(Redirection::Pipe)
-//         .capture()
-//         .unwrap()
-//         .stdout_str();
+use anyhow::{Context, Result};
 
-//     !output.is_empty()
-// }
+use duct::cmd;
+use tempfile::{NamedTempFile, Builder};
 
 #[cfg(not(windows))]
 pub fn command_exists(cmd: &str) -> bool {
-    let output = Exec::cmd("which").arg(cmd)
-        .stdout(Redirection::Pipe)
-        .capture()
-        .unwrap()
-        .stdout_str();
+    let output = cmd!("which", cmd)
+        .read()
+        .unwrap_or_else(|_| String::new());
 
-    !output.is_empty()
+    !output.trim().is_empty()
 }
 
-pub fn copy_to(mut src: File, mut dst: File) -> std::io::Result<()> {
-    let mut buf = [0; 64 * 1024];
-    loop {
-        match src.read(&mut buf)? {
-            0 => {
-                break;
-            }
-            n => {
-                let buf = &buf[..n];
-                dst.write_all(buf)?;
-            }
-        }
+pub fn open_file_with_mode(path: &str) -> Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create(true);
+
+    let (mode, clean_path) = if let Some(s) = path.strip_prefix('+') {
+        (true, s)
+    } else {
+        (false, path)
+    };
+
+    if mode {
+        options.append(true);
+    } else {
+        options.truncate(true);
     }
-    Ok(())
+
+    let file = options.open(clean_path)
+        .with_context(|| format!("Failed to open file: {}", clean_path))?;
+
+    Ok(file)
+}
+
+pub fn create_temp_file(tempdir_placeholder: &Option<&str>) -> Result<PathBuf> {
+    let temp_file = if let Some(dir) = tempdir_placeholder {
+        Builder::new().prefix("tempfile").tempfile_in(dir)?
+    } else {
+        NamedTempFile::new()?
+    };
+
+    Ok(temp_file.path().to_path_buf())
 }

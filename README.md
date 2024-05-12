@@ -117,11 +117,3 @@ Here,
 ## License
 
 MIT/Apache-2.0
-
-## Todos
-
-- [x] Reimplemented in Rust
-- [x] Testing `--force-overwrite`
-- [x] Enable handling of /dev/null
-- [x] Temporary directory (v0.4.0)
-- [x] Command-line separator (v0.4.0)
