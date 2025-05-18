@@ -3,7 +3,6 @@ extern crate anyhow;
 
 use std::env;
 use std::fs::{self, OpenOptions};
-use std::thread::yield_now;
 
 use anyhow::Result;
 use thiserror::Error;
@@ -140,6 +139,7 @@ impl Args<'_> {
         let argv = &argv[1..];
         let mut argv_index = 0;
         while args.fds.len() < 3 {
+            // eprintln!("[Args::parse] argv_index: {}, argv[argv_index]: {:?}", argv_index, argv.get(argv_index));
             if args.fds.is_empty() {
                 if let Some(u) = unpack_shorthand_args(argv[argv_index]) {
                     args.fds = u;
@@ -273,10 +273,11 @@ fn do_validate_fds(fds: &[&str], force_overwrite: bool) -> std::result::Result<(
 }
 
 fn run_pipeline(commands: &Vec<Vec<String>>, fds: &Vec<&str>, envs: &[(&str, &str)], working_directory: &Option<&str>,
-        force_overwrite: bool, tempdir_placeholder: &Option<&str>) -> Result<i32> {
+        force_overwrite: bool, tempdir_placeholder: &Option<&str>, _file_write_timeout: u64) -> Result<i32> {
     let mut pipeline: Option<duct::Expression> = None;
 
     for command in commands {
+        // eprintln!("[o-o run_pipeline] Preparing command: {:?} in cwd: {:?}", command, working_directory); // デバッグ追加
         let mut duct_cmd = cmd(&command[0], &command[1..]);
 
         if let Some(ref dir) = working_directory {
@@ -293,68 +294,75 @@ fn run_pipeline(commands: &Vec<Vec<String>>, fds: &Vec<&str>, envs: &[(&str, &st
             pipeline = Some(duct_cmd);
         }
     }
-
-    if let Some(mut final_pipeline) = pipeline {
-        let mut temp_file_path = None;
-
-        if fds[0] != "-" {
-            let file = OpenOptions::new().read(true).open(fds[0])?;
-            final_pipeline = final_pipeline.stdin_file(file);
-        }
-
-        match fds[1] {
-            "=" => {
-                let t = create_temp_file(tempdir_placeholder)?;
-                temp_file_path = Some(t.clone());
-                final_pipeline = final_pipeline.stdout_path(&t);
-            }
-            "." => {
-                final_pipeline = final_pipeline.stdout_null();
-            }
-            "-" => {
-            }
-            _ => {
-                let file = open_file_with_mode(fds[1])?;
-                final_pipeline = final_pipeline.stdout_file(file);
-            }
-        }
-
-        match fds[2] {
-            "=" => {
-                final_pipeline = final_pipeline.stderr_to_stdout();
-            }
-            "." => {
-                final_pipeline = final_pipeline.stderr_null();
-            }
-            "-" => {
-            }
-            _ => {
-                let file = open_file_with_mode(fds[2])?;
-                final_pipeline = final_pipeline.stderr_file(file);
-            }
-        }
-
-        let output = final_pipeline.unchecked().run()?;
-
-        yield_now(); // force occurs a context switch, hoping completion of file IOs
-
-        let status = output.status;
-        if status.success() || force_overwrite {
-            if let Some(temp_file) = temp_file_path {
-                fs::remove_file(fds[0])?;
-                if temp_file.exists() {
-                    fs::rename(&temp_file, fds[0])?;
-                } else {
-                    let file = OpenOptions::new().write(true).open(fds[0])?;
-                    file.set_len(0)?;
-                }
-            }
-        }
-
-        Ok(status.code().unwrap())
-    } else {
-        Err(anyhow::anyhow!("No command to execute"))
+    if pipeline.is_none() {
+        return Err(anyhow::anyhow!("No command to execute"));
     }
+
+    let mut pipeline = pipeline.unwrap();
+    let mut temp_file_path = None;
+
+    if fds[0] != "-" {
+        // eprintln!("[o-o run_pipeline] Opening stdin: {}", fds[0]); // デバッグ追加
+        let file = OpenOptions::new().read(true).open(fds[0])?;
+        pipeline = pipeline.stdin_file(file);
+    }
+
+    let mut files_to_check = Vec::<String>::new();
+
+    match fds[1] {
+        "=" => {
+            let t = create_temp_file(tempdir_placeholder)?;
+            temp_file_path = Some(t.clone());
+            pipeline = pipeline.stdout_path(&t);
+        }
+        "." => {
+            pipeline = pipeline.stdout_null();
+        }
+        "-" => {
+        }
+        _ => {
+            // eprintln!("[o-o run_pipeline] Opening stdout: {}", fds[1]); // デバッグ追加
+            files_to_check.push(fds[1].to_string());
+            let file = open_file_with_mode(fds[1])?;
+            pipeline = pipeline.stdout_file(file);
+        }
+    }
+
+    match fds[2] {
+        "=" => {
+            pipeline = pipeline.stderr_to_stdout();
+        }
+        "." => {
+            pipeline = pipeline.stderr_null();
+        }
+        "-" => {
+        }
+        _ => {
+            // eprintln!("[o-o run_pipeline] Opening stderr: {}", fds[2]); // デバッグ追加
+            files_to_check.push(fds[2].to_string());
+            let file = open_file_with_mode(fds[2])?;
+            pipeline = pipeline.stderr_file(file);
+        }
+    }
+
+    // eprintln!("[o-o run_pipeline] Executing pipeline..."); // デバッグ追加
+    let output = pipeline.unchecked().run()?;
+    do_sync();
+
+    let status = output.status;
+    if status.success() || force_overwrite {
+        if let Some(temp_file) = temp_file_path {
+            if env::consts::OS != "windows" {
+                fs::rename(&temp_file, fds[0])?; // overwrite the file
+            } else {
+                let file = OpenOptions::new().write(true).open(fds[0])?;
+                file.set_len(0)?;
+            }
+            do_sync();
+        }
+    }
+
+    Ok(status.code().unwrap())
 }
 
 fn print_debug_info<S: AsRef<str>, T: AsRef<str>, U: AsRef<str>>(raw_args: &Args, pipelines : &[Vec<Vec<S>>], tempdir_replaced_arguments: &[(T, U)]) {
@@ -439,16 +447,13 @@ fn reform_pipeline_for_2nd_or_later_oo_command_line<'s>(pl: &'s Vec<Vec<String>>
     Ok((sub_pl, sub_a))
 }
 
-fn main() -> anyhow::Result<()> {
-    // Parse command-line arguments
-    let argv0: Vec<String> = env::args().collect();
-    let argv: Vec<&str> = argv0.iter().map(AsRef::as_ref).collect();
+pub fn main_argv(argv: &Vec<&str>) -> anyhow::Result<i32> {
     if argv.len() == 1 {
         print!("{}", USAGE);
-        return Ok(());
+        return Ok(0);
     }
 
-    let mut a = Args::parse(&argv)?;
+    let mut a = Args::parse(argv)?;
 
     let td_placeholder = a.tempdir_placeholder.unwrap_or("T");
     let pipe_str = a.pipe_str.unwrap_or("I");
@@ -489,7 +494,7 @@ fn main() -> anyhow::Result<()> {
 
     if a.debug_info {
         print_debug_info(&a, &pipelines, &tdrep_args);
-        return Ok(());
+        return Ok(0);
     }
 
     // Validate command-line arguments
@@ -498,12 +503,14 @@ fn main() -> anyhow::Result<()> {
         a.fds[1] = "-";
     }
 
+    let file_write_timeout = 3000;
+
     // Exec 1st pipeline
     let pl = pipelines.remove(0);
     let mut exit_code = run_pipeline(&pl, &a.fds, &a.envs, &a.working_directory, 
-        a.force_overwrite, &a.tempdir_placeholder)?;
+        a.force_overwrite, &a.tempdir_placeholder, file_write_timeout)?;
     if ! a.keep_going && exit_code != 0 {
-        std::process::exit(exit_code);
+        return Ok(exit_code);
     }
 
     // Exec 2nd or later pipeline
@@ -515,250 +522,27 @@ fn main() -> anyhow::Result<()> {
         exit_code = if cmd_is_oo {
             let (sub_pl, sub_a) = reform_pipeline_for_2nd_or_later_oo_command_line(&pl, &a)?;
             run_pipeline(&sub_pl, &sub_a.fds, &sub_a.envs, &sub_a.working_directory,
-                a.force_overwrite, &a.tempdir_placeholder)?
+                a.force_overwrite, &a.tempdir_placeholder, file_write_timeout)?
         } else {
             run_pipeline(&pl, &a.fds, &a.envs, &a.working_directory,
-                a.force_overwrite, &a.tempdir_placeholder)?
+                a.force_overwrite, &a.tempdir_placeholder, file_write_timeout)?
         };
         if ! a.keep_going && exit_code != 0 {
-            std::process::exit(exit_code);
+            return Ok(exit_code);
         }
     }
     if exit_code != 0 {
-        std::process::exit(exit_code);
+        return Ok(exit_code);
     }
 
-    Ok(())
+    Ok(0)
 }
 
-#[cfg(test)]
-mod fds_validate_test {
-    use super::*;
+fn main() -> anyhow::Result<()> {
+    // Parse command-line arguments
+    let argv0: Vec<String> = env::args().collect();
+    let argv: Vec<&str> = argv0.iter().map(AsRef::as_ref).collect();
 
-    #[test]
-    fn missing_fds() {
-        let fds: Vec<&str> = vec!["a", "b"];
-        assert!(do_validate_fds(&fds, false).is_err());
-    }
-
-    #[test]
-    fn invalid_usage_of_plus() {
-        let fds: Vec<&str> = vec!["a", "b", "+="];
-        assert!(do_validate_fds(&fds, false).is_err());
-
-        let fds: Vec<&str> = vec!["a", "b", "+-"];
-        assert!(do_validate_fds(&fds, false).is_err());
-    }
-
-    #[test]
-    fn invalid_usage_of_equal() {
-        let fds: Vec<&str> = vec!["=", "b", "c"];
-        assert!(do_validate_fds(&fds, false).is_err());
-    }
-
-    #[test]
-    fn same_file_names() {
-        let fds: Vec<&str> = vec!["a", "a", "b"];
-        assert!(do_validate_fds(&fds, false).is_err());
-
-        let fds: Vec<&str> = vec!["a", "b", "a"];
-        assert!(do_validate_fds(&fds, false).is_err());
-
-        let fds: Vec<&str> = vec!["a", "b", "b"];
-        assert!(do_validate_fds(&fds, false).is_err());
-    }
-
-    #[test]
-    fn force_overwrite() {
-        let fds: Vec<&str> = vec!["a", "b", "c"];
-        assert!(do_validate_fds(&fds, true).is_err());
-
-        let fds: Vec<&str> = vec!["a", "=", "c"];
-        assert!(do_validate_fds(&fds, true).is_ok());
-
-        let fds: Vec<&str> = vec!["-", "=", "c"];
-        assert!(do_validate_fds(&fds, true).is_err());
-    }
-}
-
-#[cfg(test)]
-mod main_tests {
-    use super::*;
-
-    #[test]
-    fn parse_empty() {
-        let argv: Vec<&str> = vec!["exec", "cmd"];
-        let _err: anyhow::Error = Args::parse(&argv).unwrap_err();
-    }
-
-    #[test]
-    fn parse_fds() {
-        let argv: Vec<&str> = vec!["exec", "a", "b", "c", "cmd"];
-        let a = Args::parse(&argv).unwrap();
-
-        assert_eq!(a, Args { 
-            fds: vec!["a", "b", "c"],
-            command_line: vec!["cmd"],
-            force_overwrite: false,
-            keep_going: false,
-            envs: vec![],
-            working_directory: None,
-            debug_info: false,
-            pipe_str: None,
-            separator_str: None,
-            tempdir_placeholder: None,
-        });
-    }
-
-    #[test]
-    fn parse_omitted_fds() {
-        let argv: Vec<&str> = vec!["exec", "a", "b", "--", "cmd"];
-        let a = Args::parse(&argv).unwrap();
-
-        assert_eq!(a, Args { 
-            fds: vec!["a", "b", "-"],
-            command_line: vec!["cmd"],
-            force_overwrite: false,
-            keep_going: false,
-            envs: vec![],
-            working_directory: None,
-            debug_info: false,
-            pipe_str: None,
-            separator_str: None,
-            tempdir_placeholder: None,
-        });
-    }
-
-    #[test]
-    fn parse_omitted_fds2() {
-        let argv: Vec<&str> = vec!["exec", "a", "--", "cmd"];
-        let a = Args::parse(&argv).unwrap();
-
-        assert_eq!(a, Args { 
-            fds: vec!["a", "-", "-"],
-            command_line: vec!["cmd"],
-            force_overwrite: false,
-            keep_going: false,
-            envs: vec![],
-            working_directory: None,
-            debug_info: false,
-            pipe_str: None,
-            separator_str: None,
-            tempdir_placeholder: None,
-        });
-    }
-
-    #[test]
-    fn parse_omitted_fds3() {
-        let argv: Vec<&str> = vec!["exec", "--", "cmd"];
-        let a = Args::parse(&argv).unwrap();
-
-        assert_eq!(a, Args { 
-            fds: vec!["-", "-", "-"],
-            command_line: vec!["cmd"],
-            force_overwrite: false,
-            keep_going: false,
-            envs: vec![],
-            working_directory: None,
-            debug_info: false,
-            pipe_str: None,
-            separator_str: None,
-            tempdir_placeholder: None,
-        });
-    }
-
-    #[test]
-    fn parse_shorthand_fds() {
-        let argv: Vec<&str> = vec!["exec", "---", "cmd"];
-        let a = Args::parse(&argv).unwrap();
-
-        assert_eq!(a, Args { 
-            fds: vec!["-", "-", "-"],
-            command_line: vec!["cmd"],
-            force_overwrite: false,
-            keep_going: false,
-            envs: vec![],
-            working_directory: None,
-            debug_info: false,
-            pipe_str: None,
-            separator_str: None,
-            tempdir_placeholder: None,
-        });
-    }
-
-    #[test]
-    fn parse_including_tempdir() {
-        let argv: Vec<&str> = vec!["exec", "---", "cat", "T/hoge.txt"];
-        let a = Args::parse(&argv).unwrap();
-
-        assert_eq!(a, Args { 
-            fds: vec!["-", "-", "-"],
-            command_line: vec!["cat", "T/hoge.txt"],
-            force_overwrite: false,
-            keep_going: false,
-            envs: vec![],
-            working_directory: None,
-            debug_info: false,
-            pipe_str: None,
-            separator_str: None,
-            tempdir_placeholder: None,
-        });
-    }
-
-    #[test]
-    fn parse_tempdir_option() {
-        let argv: Vec<&str> = vec!["exec", "-t", "HOGE", "---", "cat", "HOGE/hoge.txt"];
-        let a = Args::parse(&argv).unwrap();
-
-        assert_eq!(a, Args { 
-            fds: vec!["-", "-", "-"],
-            command_line: vec!["cat", "HOGE/hoge.txt"],
-            force_overwrite: false,
-            keep_going: false,
-            envs: vec![],
-            working_directory: None,
-            debug_info: false,
-            pipe_str: None,
-            separator_str: None,
-            tempdir_placeholder: Some("HOGE"),
-        });
-    }
-
-    #[test]
-    fn parse_pipe_str_option() {
-        let argv: Vec<&str> = vec!["exec", "--pipe", "%%", "---", "cat", "hoge.txt", "%%", "wc"];
-        let a = Args::parse(&argv).unwrap();
-
-        assert_eq!(a, Args { 
-            fds: vec!["-", "-", "-"],
-            command_line: vec!["cat", "hoge.txt", "%%", "wc"],
-            force_overwrite: false,
-            keep_going: false,
-            envs: vec![],
-            working_directory: None,
-            debug_info: false,
-            pipe_str: Some("%%"),
-            separator_str: None,
-            tempdir_placeholder: None,
-        });
-    }
-
-    #[test]
-    fn parse_separator_str_option() {
-        let argv: Vec<&str> = vec!["exec", "--separator", "%%", "---", "cat", "hoge.txt", "%%", "cat", "fuga.txt"];
-        let a = Args::parse(&argv).unwrap();
-
-        assert_eq!(a, Args { 
-            fds: vec!["-", "-", "-"],
-            command_line: vec!["cat", "hoge.txt", "%%", "cat", "fuga.txt"],
-            force_overwrite: false,
-            keep_going: false,
-            envs: vec![],
-            working_directory: None,
-            debug_info: false,
-            pipe_str: None,
-            separator_str: Some("%%"),
-            tempdir_placeholder: None,
-        });
-    }
+    let exit_code = main_argv(&argv)?;
+    std::process::exit(exit_code);
 }

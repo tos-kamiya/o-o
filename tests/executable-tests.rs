@@ -3,22 +3,23 @@
 
 mod executable_tests {
     use std::fs;
-    use std::io;
-    use std::io::Write;
+    use std::io::{self, Write};
     use std::path::Path;
     use std::process::Command;
-    use std::thread::yield_now;
 
     use tempfile::tempdir;
+
+    use o_o::do_sync;
 
     fn SU<'a>(p: &'a Path) -> &'a str {
         p.to_str().unwrap()
     }
 
-    pub fn file_write<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> io::Result<()> {
+    pub fn file_write<P: AsRef<Path> + Copy, C: AsRef<[u8]>>(path: P, contents: C) -> io::Result<()> {
         let mut f = fs::File::create(path)?;
         f.write(contents.as_ref())?;
         f.sync_all()?;
+        do_sync();
 
         Ok(())
     }
@@ -41,7 +42,6 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = file_write(SU(&file_a), "file a.\n")?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let temp_file = temp_dir.path().join("ls-output.txt");
         let output = Command::new("./target/debug/o-o")
@@ -91,7 +91,6 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = file_write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("cargo")
             .args([
@@ -124,11 +123,10 @@ mod executable_tests {
 
         let script = temp_dir.path().join(SCRIPT);
         let _ = file_write(SU(&script), "echo \"stdout\" >&1\necho \"stderr\" >&2\n")?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let out_file = temp_dir.path().join("out.txt");
         let err_file = temp_dir.path().join("err.txt");
-        let status = Command::new("cargo")
+        let output = Command::new("cargo")
             .args([
                 "run",
                 "--",
@@ -140,9 +138,16 @@ mod executable_tests {
                 "bash",
                 SU(&script),
             ])
-            .status()?;
+        .output()?; // output() を使う
 
-        assert!(status.code().unwrap() == 0);
+        assert_eq!(output.status.code(), Some(0),
+            "o-o command failed. Exit code: {:?}\nStdout: {}\nStderr: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr) // o-o 自体の stderr
+        );
+
+        do_sync();
 
         let out_file_contents = fs::read_to_string(SU(&out_file))?;
         assert!(out_file_contents.find("stdout").is_some());
@@ -164,7 +169,6 @@ mod executable_tests {
 
         let script = temp_dir.path().join(SCRIPT);
         let _ = file_write(SU(&script), "echo \"stdout\" >&1\necho \"stderr\" >&2\n")?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("cargo")
             .args([
@@ -182,6 +186,8 @@ mod executable_tests {
 
         assert!(output.status.code().unwrap() == 0);
 
+        do_sync();
+
         let output_contents = String::from_utf8(output.stdout).unwrap();
         assert!(output_contents.find("stdout").is_some());
         assert!(output_contents.find("stderr").is_some());
@@ -196,7 +202,6 @@ mod executable_tests {
 
         let out_file = temp_dir.path().join("out.txt");
         let append_out_file = format!("+{}", SU(&out_file));
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let status1 = Command::new("cargo")
             .args([
@@ -213,6 +218,8 @@ mod executable_tests {
             .status()?;
         assert!(status1.code().unwrap() == 0);
 
+        do_sync();
+
         let status2 = Command::new("cargo")
             .args([
                 "run",
@@ -227,6 +234,8 @@ mod executable_tests {
             ])
             .status()?;
         assert!(status2.code().unwrap() == 0);
+
+        do_sync();
 
         let out_file_contents = fs::read_to_string(SU(&out_file))?;
         assert!(out_file_contents.find("1st line").is_some());
@@ -244,12 +253,13 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = file_write(SU(&file_a), "file a.\n")?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let status = Command::new("cargo")
             .args(["run", "--", "-d", SU(&temp_dir.path()), SU(&file_a), "=", "-", "wc"])
             .status()?;
         assert!(status.code().unwrap() == 0);
+
+        do_sync();
 
         let file_a_contents = fs::read_to_string(SU(&file_a))?;
         assert!(file_a_contents.find("1").is_some());
@@ -266,7 +276,6 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = file_write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("cargo")
             .args([
@@ -289,6 +298,8 @@ mod executable_tests {
 
         assert!(output.status.code().unwrap() == 0);
 
+        do_sync();
+
         let output_contents = String::from_utf8(output.stdout).unwrap();
         assert!(output_contents.find("3\n").is_some());
 
@@ -305,7 +316,6 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = file_write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("cargo")
             .args([
@@ -330,6 +340,8 @@ mod executable_tests {
 
         assert!(output.status.code().unwrap() == 0);
 
+        do_sync();
+
         let output_contents = String::from_utf8(output.stdout).unwrap();
         assert!(output_contents.trim().starts_with("3"));
 
@@ -345,7 +357,6 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = file_write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("cargo")
             .args([
@@ -380,39 +391,48 @@ mod executable_tests {
         const FILE_B: &str = "b.txt";
 
         let temp_dir = tempdir()?;
+        let work_dir = SU(&temp_dir.path());
 
-        let file_a = temp_dir.path().join(FILE_A);
-        let _ = file_write(SU(&file_a), "1st line\n2nd line\n3rd line\n")?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
-        let file_b = temp_dir.path().join(FILE_A);
+        let file_a_path = temp_dir.path().join(FILE_A);
+        let _ = file_write(&file_a_path, "1st line\n2nd line\n3rd line\n")?;
+        let file_b_path = temp_dir.path().join(FILE_B); // PathBufとして保持
 
-        let output = Command::new("cargo")
+        let output = Command::new("./target/debug/o-o")
             .args([
-                "run",
-                "--",
                 "-d",
-                SU(&temp_dir.path()),
+                work_dir,
                 "-s",
                 "S",
-                "-",
-                "-",
-                "-",
+                "-",  // stdin for inner o-o for cp
+                "-",  // stdout for inner o-o for cp
+                "-",  // stderr for inner o-o for cp
                 "cp",
-                FILE_A,
-                FILE_B,
+                FILE_A,           // cpの引数 (作業ディレクトリからの相対パス)
+                FILE_B,           // cpの引数 (作業ディレクトリからの相対パス)
                 "S",
-                "o-o",
-                SU(&file_b),
-                "-",
-                "-",
+                // 2番目の o-o コマンド: wc を実行
+                "o-o", // コマンド
+                "-d", work_dir, // ネストされたo-oにも作業ディレクトリを指定
+                SU(&file_b_path), // stdin for inner o-o for wc (b.txt を読み込む)
+                "-",              // stdout for inner o-o for wc (o-o全体のstdoutへ)
+                "-",              // stderr for inner o-o for wc
                 "wc",
+                "-l",             // wcの引数
             ])
             .output()?;
 
-        assert!(output.status.code().unwrap() == 0);
+        do_sync();
+
+        assert_eq!(output.status.code(), Some(0),
+            "o-o command failed. Exit code: {:?}\nStdout: {}\nStderr: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
 
         let output_contents = String::from_utf8(output.stdout).unwrap();
-        assert!(output_contents.trim().starts_with("3"));
+        // wc -l <file_path> ではなく標準入力から読ませるので、出力は行数のみになるはず
+        assert_eq!(output_contents.trim(), "3", "Expected output to be '3', but got: '{}'", output_contents.trim());
 
         temp_dir.close()?;
         Ok(())
@@ -433,7 +453,6 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = file_write(SU(&file_a), "file a original contents\n")?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let status = Command::new("cargo")
             .args([
@@ -449,6 +468,8 @@ mod executable_tests {
             ])
             .status()?;
         assert!(status.code().unwrap() != 0);
+
+        do_sync();
 
         let file_a_contents = fs::read_to_string(SU(&file_a))?;
         assert!(file_a_contents.find("original contents").is_some());
@@ -473,7 +494,6 @@ mod executable_tests {
 
         let file_a = temp_dir.path().join(FILE_A);
         let _ = file_write(SU(&file_a), "file a original contents\n")?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let status = Command::new("cargo")
             .args([
@@ -491,6 +511,8 @@ mod executable_tests {
             .status()?;
         assert!(status.code().unwrap() != 0);
 
+        do_sync();
+
         let file_a_contents = fs::read_to_string(SU(&file_a))?;
         assert!(!file_a_contents.find("original contents").is_some());
         assert!(file_a_contents.find("echo and fail!").is_some());
@@ -507,7 +529,6 @@ mod executable_tests {
 
         let script = temp_dir.path().join(SCRIPT);
         let _ = file_write(SU(&script), "echo $V\n")?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("cargo")
             .args([
@@ -527,6 +548,8 @@ mod executable_tests {
 
         assert!(output.status.code().unwrap() == 0);
 
+        do_sync();
+
         let output_contents = String::from_utf8(output.stdout).unwrap();
         assert!(output_contents.find("some").is_some());
 
@@ -539,10 +562,22 @@ mod executable_tests {
         let temp_dir = tempdir()?;
 
         let output = Command::new("cargo")
-            .args(["run", "--", "-d", SU(&temp_dir.path()), "-", ".", "-", "echo", "hello"])
+            .args([
+                "run", 
+                "--", 
+                "-d", 
+                SU(&temp_dir.path()), 
+                "-", 
+                ".", 
+                "-", 
+                "echo", 
+                "hello"
+            ])
             .output()?;
 
         assert!(output.status.code().unwrap() == 0);
+
+        do_sync();
 
         let output_contents = String::from_utf8(output.stdout).unwrap();
         assert!(!output_contents.find("hello").is_some());
@@ -562,7 +597,6 @@ mod executable_tests {
             SU(&script),
             "echo !!If you see this message, the test \"stderr_devnull\" failed.!! >&2\n",
         )?;
-        yield_now(); // force occurs a context switch, with hoping to complete file IOs
 
         let output = Command::new("cargo")
             .args([
