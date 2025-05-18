@@ -15,7 +15,11 @@ mod executable_tests {
         p.to_str().unwrap()
     }
 
-    pub fn file_write<P: AsRef<Path> + Copy, C: AsRef<[u8]>>(path: P, contents: C) -> io::Result<()> {
+    /// Helper function: writes contents to a file and flushes/syncs to disk.
+    pub fn file_write<P: AsRef<Path> + Copy, C: AsRef<[u8]>>(
+        path: P,
+        contents: C,
+    ) -> io::Result<()> {
         let mut f = fs::File::create(path)?;
         f.write(contents.as_ref())?;
         f.sync_all()?;
@@ -138,13 +142,15 @@ mod executable_tests {
                 "bash",
                 SU(&script),
             ])
-        .output()?; // output() を使う
+            .output()?; // use output()
 
-        assert_eq!(output.status.code(), Some(0),
+        assert_eq!(
+            output.status.code(),
+            Some(0),
             "o-o command failed. Exit code: {:?}\nStdout: {}\nStderr: {}",
             output.status.code(),
             String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr) // o-o 自体の stderr
+            String::from_utf8_lossy(&output.stderr) // stderr from o-o itself
         );
 
         do_sync();
@@ -255,7 +261,16 @@ mod executable_tests {
         let _ = file_write(SU(&file_a), "file a.\n")?;
 
         let status = Command::new("cargo")
-            .args(["run", "--", "-d", SU(&temp_dir.path()), SU(&file_a), "=", "-", "wc"])
+            .args([
+                "run",
+                "--",
+                "-d",
+                SU(&temp_dir.path()),
+                SU(&file_a),
+                "=",
+                "-",
+                "wc",
+            ])
             .status()?;
         assert!(status.code().unwrap() == 0);
 
@@ -395,7 +410,7 @@ mod executable_tests {
 
         let file_a_path = temp_dir.path().join(FILE_A);
         let _ = file_write(&file_a_path, "1st line\n2nd line\n3rd line\n")?;
-        let file_b_path = temp_dir.path().join(FILE_B); // PathBufとして保持
+        let file_b_path = temp_dir.path().join(FILE_B); // Keep as PathBuf
 
         let output = Command::new("./target/debug/o-o")
             .args([
@@ -403,27 +418,30 @@ mod executable_tests {
                 work_dir,
                 "-s",
                 "S",
-                "-",  // stdin for inner o-o for cp
-                "-",  // stdout for inner o-o for cp
-                "-",  // stderr for inner o-o for cp
+                "-", // stdin for inner o-o for cp
+                "-", // stdout for inner o-o for cp
+                "-", // stderr for inner o-o for cp
                 "cp",
-                FILE_A,           // cpの引数 (作業ディレクトリからの相対パス)
-                FILE_B,           // cpの引数 (作業ディレクトリからの相対パス)
+                FILE_A, // cp's argument (relative to working dir)
+                FILE_B, // cp's argument (relative to working dir)
                 "S",
-                // 2番目の o-o コマンド: wc を実行
-                "o-o", // コマンド
-                "-d", work_dir, // ネストされたo-oにも作業ディレクトリを指定
-                SU(&file_b_path), // stdin for inner o-o for wc (b.txt を読み込む)
-                "-",              // stdout for inner o-o for wc (o-o全体のstdoutへ)
+                // Second o-o command: run wc
+                "o-o", // command
+                "-d",
+                work_dir,         // specify working directory for nested o-o
+                SU(&file_b_path), // stdin for inner o-o for wc (reads b.txt)
+                "-",              // stdout for inner o-o for wc (to overall stdout)
                 "-",              // stderr for inner o-o for wc
                 "wc",
-                "-l",             // wcの引数
+                "-l", // argument for wc
             ])
             .output()?;
 
         do_sync();
 
-        assert_eq!(output.status.code(), Some(0),
+        assert_eq!(
+            output.status.code(),
+            Some(0),
             "o-o command failed. Exit code: {:?}\nStdout: {}\nStderr: {}",
             output.status.code(),
             String::from_utf8_lossy(&output.stdout),
@@ -431,8 +449,13 @@ mod executable_tests {
         );
 
         let output_contents = String::from_utf8(output.stdout).unwrap();
-        // wc -l <file_path> ではなく標準入力から読ませるので、出力は行数のみになるはず
-        assert_eq!(output_contents.trim(), "3", "Expected output to be '3', but got: '{}'", output_contents.trim());
+        // Since we are reading from stdin (not wc -l <file_path>), the output should only be the line count.
+        assert_eq!(
+            output_contents.trim(),
+            "3",
+            "Expected output to be '3', but got: '{}'",
+            output_contents.trim()
+        );
 
         temp_dir.close()?;
         Ok(())
@@ -563,15 +586,15 @@ mod executable_tests {
 
         let output = Command::new("cargo")
             .args([
-                "run", 
-                "--", 
-                "-d", 
-                SU(&temp_dir.path()), 
-                "-", 
-                ".", 
-                "-", 
-                "echo", 
-                "hello"
+                "run",
+                "--",
+                "-d",
+                SU(&temp_dir.path()),
+                "-",
+                ".",
+                "-",
+                "echo",
+                "hello",
             ])
             .output()?;
 
@@ -617,5 +640,4 @@ mod executable_tests {
         temp_dir.close()?;
         Ok(())
     }
-
 }

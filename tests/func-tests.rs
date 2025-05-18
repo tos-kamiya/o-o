@@ -1,6 +1,5 @@
 #[cfg(test)]
 #[allow(non_snake_case)]
-
 #[cfg(test)]
 mod func_tests {
     use o_o::*;

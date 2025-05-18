@@ -47,9 +47,13 @@ fn is_filename_like_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '-' || c == '.'
 }
 
-fn replace_tempdir_name(arg: &str, tempdir_placeholder: &str, temp_dir_str: &str) -> Option<String> {
+fn replace_tempdir_name(
+    arg: &str,
+    tempdir_placeholder: &str,
+    temp_dir_str: &str,
+) -> Option<String> {
     if tempdir_placeholder.is_empty() {
-        return None
+        return None;
     }
 
     let parts: Vec<&str> = arg.split(tempdir_placeholder).collect();
@@ -57,9 +61,21 @@ fn replace_tempdir_name(arg: &str, tempdir_placeholder: &str, temp_dir_str: &str
     let mut replacement_occurs = false;
     for i in 0..parts.len() {
         let prev = if i > 0 { parts[i - 1] } else { "" };
-        let next = if i + 1 < parts.len() { parts[i + 1] } else { "" };
-        let prev_last_char = if prev.is_empty() { ' ' } else { prev.chars().last().unwrap() };
-        let next_first_char = if next.is_empty() { ' ' } else { next.chars().nth(0).unwrap() };
+        let next = if i + 1 < parts.len() {
+            parts[i + 1]
+        } else {
+            ""
+        };
+        let prev_last_char = if prev.is_empty() {
+            ' '
+        } else {
+            prev.chars().last().unwrap()
+        };
+        let next_first_char = if next.is_empty() {
+            ' '
+        } else {
+            next.chars().nth(0).unwrap()
+        };
         if !is_filename_like_char(prev_last_char) && next_first_char == '/' {
             replaced_parts.push(temp_dir_str.to_owned());
             replacement_occurs = true;
@@ -149,7 +165,8 @@ impl Args<'_> {
             }
             let pr = parse(argv, argv_index)?;
             let eat = match pr.0 {
-                "-h" | "--help" => { // help
+                "-h" | "--help" => {
+                    // help
                     print!("{}", USAGE);
                     std::process::exit(0);
                 }
@@ -173,7 +190,13 @@ impl Args<'_> {
                     let value = unwrap_argument(pr)?;
                     let p = value.find('=');
                     if p.is_none() {
-                        return Err(OOError::CLIError { message: format!("option -e's argument should be `VAR=VALUE`: {}", pr.0) }.into());
+                        return Err(OOError::CLIError {
+                            message: format!(
+                                "option -e's argument should be `VAR=VALUE`: {}",
+                                pr.0
+                            ),
+                        }
+                        .into());
                     }
                     let p = p.unwrap();
                     args.envs.push((&value[..p], &value[p + 1..]));
@@ -183,11 +206,11 @@ impl Args<'_> {
                     args.working_directory = Some(unwrap_argument(pr)?);
                     2
                 }
-                "-p" | "--pipe"  => {
+                "-p" | "--pipe" => {
                     args.pipe_str = Some(unwrap_argument(pr)?);
                     2
                 }
-                "-s" | "--separator"  => {
+                "-s" | "--separator" => {
                     args.separator_str = Some(unwrap_argument(pr)?);
                     2
                 }
@@ -195,17 +218,19 @@ impl Args<'_> {
                     args.tempdir_placeholder = Some(unwrap_argument(pr)?);
                     2
                 }
-                "--" => { // separator
+                "--" => {
+                    // separator
                     while args.fds.len() < 3 {
                         args.fds.push("-");
                     }
                     break;
                 }
-                a if is_argument(a) => { // argument
+                a if is_argument(a) => {
+                    // argument
                     args.fds.push(a);
                     1
                 }
-                _ => 0 // unknown flag/option 
+                _ => 0, // unknown flag/option
             };
 
             argv_index = next_index(argv, argv_index, eat)?;
@@ -214,14 +239,18 @@ impl Args<'_> {
             }
         }
         if argv_index < argv.len() {
-            if argv[argv_index] == "--" { // in case a redundant "--" is given as the 4th argument
+            if argv[argv_index] == "--" {
+                // in case a redundant "--" is given as the 4th argument
                 argv_index += 1;
             }
             args.command_line.extend_from_slice(&argv[argv_index..]);
         }
 
         if args.command_line.is_empty() {
-            return Err(OOError::CLIError { message: "no command line specified".to_string() }.into())
+            return Err(OOError::CLIError {
+                message: "no command line specified".to_string(),
+            }
+            .into());
         }
 
         Ok(args)
@@ -230,7 +259,9 @@ impl Args<'_> {
 
 fn do_validate_fds(fds: &[&str], force_overwrite: bool) -> std::result::Result<(), OOError> {
     let err = |message: &str| {
-        Err(OOError::CLIError { message: message.to_string() })
+        Err(OOError::CLIError {
+            message: message.to_string(),
+        })
     };
 
     if fds.len() < 3 {
@@ -239,7 +270,7 @@ fn do_validate_fds(fds: &[&str], force_overwrite: bool) -> std::result::Result<(
 
     for fd in &fds[1..] {
         if command_exists(fd) {
-            return Err(OOError::CLIError { message: format!("out/err looks a command: {}\n> (Use `--` to explicitly separate command from out/err)", fd)})
+            return Err(OOError::CLIError { message: format!("out/err looks a command: {}\n> (Use `--` to explicitly separate command from out/err)", fd)});
         }
     }
 
@@ -272,12 +303,19 @@ fn do_validate_fds(fds: &[&str], force_overwrite: bool) -> std::result::Result<(
     Ok(())
 }
 
-fn run_pipeline(commands: &Vec<Vec<String>>, fds: &Vec<&str>, envs: &[(&str, &str)], working_directory: &Option<&str>,
-        force_overwrite: bool, tempdir_placeholder: &Option<&str>, _file_write_timeout: u64) -> Result<i32> {
+fn run_pipeline(
+    commands: &Vec<Vec<String>>,
+    fds: &Vec<&str>,
+    envs: &[(&str, &str)],
+    working_directory: &Option<&str>,
+    force_overwrite: bool,
+    tempdir_placeholder: &Option<&str>,
+    _file_write_timeout: u64,
+) -> Result<i32> {
     let mut pipeline: Option<duct::Expression> = None;
 
     for command in commands {
-        // eprintln!("[o-o run_pipeline] Preparing command: {:?} in cwd: {:?}", command, working_directory); // デバッグ追加
+        // eprintln!("[o-o run_pipeline] Preparing command: {:?} in cwd: {:?}", command, working_directory); // Debug print
         let mut duct_cmd = cmd(&command[0], &command[1..]);
 
         if let Some(ref dir) = working_directory {
@@ -302,7 +340,7 @@ fn run_pipeline(commands: &Vec<Vec<String>>, fds: &Vec<&str>, envs: &[(&str, &st
     let mut temp_file_path = None;
 
     if fds[0] != "-" {
-        // eprintln!("[o-o run_pipeline] Opening stdin: {}", fds[0]); // デバッグ追加
+        // eprintln!("[o-o run_pipeline] Opening stdin: {}", fds[0]); // Debug
         let file = OpenOptions::new().read(true).open(fds[0])?;
         pipeline = pipeline.stdin_file(file);
     }
@@ -318,10 +356,9 @@ fn run_pipeline(commands: &Vec<Vec<String>>, fds: &Vec<&str>, envs: &[(&str, &st
         "." => {
             pipeline = pipeline.stdout_null();
         }
-        "-" => {
-        }
+        "-" => {}
         _ => {
-            // eprintln!("[o-o run_pipeline] Opening stdout: {}", fds[1]); // デバッグ追加
+            // eprintln!("[o-o run_pipeline] Opening stdout: {}", fds[1]); // Debug print
             files_to_check.push(fds[1].to_string());
             let file = open_file_with_mode(fds[1])?;
             pipeline = pipeline.stdout_file(file);
@@ -335,17 +372,16 @@ fn run_pipeline(commands: &Vec<Vec<String>>, fds: &Vec<&str>, envs: &[(&str, &st
         "." => {
             pipeline = pipeline.stderr_null();
         }
-        "-" => {
-        }
+        "-" => {}
         _ => {
-            // eprintln!("[o-o run_pipeline] Opening stderr: {}", fds[2]); // デバッグ追加
+            // eprintln!("[o-o run_pipeline] Opening stderr: {}", fds[2]); // Debug print
             files_to_check.push(fds[2].to_string());
             let file = open_file_with_mode(fds[2])?;
             pipeline = pipeline.stderr_file(file);
         }
     }
 
-    // eprintln!("[o-o run_pipeline] Executing pipeline..."); // デバッグ追加
+    // eprintln!("[o-o run_pipeline] Executing pipeline..."); // Debug print
     let output = pipeline.unchecked().run()?;
     do_sync();
 
@@ -365,7 +401,11 @@ fn run_pipeline(commands: &Vec<Vec<String>>, fds: &Vec<&str>, envs: &[(&str, &st
     Ok(status.code().unwrap())
 }
 
-fn print_debug_info<S: AsRef<str>, T: AsRef<str>, U: AsRef<str>>(raw_args: &Args, pipelines : &[Vec<Vec<S>>], tempdir_replaced_arguments: &[(T, U)]) {
+fn print_debug_info<S: AsRef<str>, T: AsRef<str>, U: AsRef<str>>(
+    raw_args: &Args,
+    pipelines: &[Vec<Vec<S>>],
+    tempdir_replaced_arguments: &[(T, U)],
+) {
     println!("fds = {:?}", raw_args.fds);
     println!("command_line = {:?}", raw_args.command_line);
     println!("force_overwrite = {:?}", raw_args.force_overwrite);
@@ -402,9 +442,15 @@ fn print_debug_info<S: AsRef<str>, T: AsRef<str>, U: AsRef<str>>(raw_args: &Args
     }
 }
 
-fn reform_pipeline_for_2nd_or_later_oo_command_line<'s>(pl: &'s Vec<Vec<String>>, a: &'s Args) -> anyhow::Result<(Vec<Vec<String>>, Args<'s>)> {
+fn reform_pipeline_for_2nd_or_later_oo_command_line<'s>(
+    pl: &'s Vec<Vec<String>>,
+    a: &'s Args,
+) -> anyhow::Result<(Vec<Vec<String>>, Args<'s>)> {
     let err = |message: &str| {
-        Err(OOError::CLIError { message: message.to_string() }.into())
+        Err(OOError::CLIError {
+            message: message.to_string(),
+        }
+        .into())
     };
 
     let pl0: Vec<&str> = pl.get(0).unwrap().iter().map(|s| s.as_ref()).collect();
@@ -478,8 +524,12 @@ pub fn main_argv(argv: &Vec<&str>) -> anyhow::Result<i32> {
         } else {
             // Replace temp-directory holder string to a real temp-directory path
             let r = replace_tempdir_name(arg, td_placeholder, "dummy");
-            pipelines.last_mut().unwrap().last_mut().unwrap().push(
-                if r.is_some() {
+            pipelines
+                .last_mut()
+                .unwrap()
+                .last_mut()
+                .unwrap()
+                .push(if r.is_some() {
                     let td = temp_dir.get_or_insert_with(|| tempdir().unwrap());
                     let td_path_str = td.path().to_str().unwrap();
                     let r = replace_tempdir_name(arg, td_placeholder, td_path_str).unwrap();
@@ -487,8 +537,7 @@ pub fn main_argv(argv: &Vec<&str>) -> anyhow::Result<i32> {
                     r
                 } else {
                     arg.to_string()
-                }
-            );
+                });
         }
     }
 
@@ -507,9 +556,16 @@ pub fn main_argv(argv: &Vec<&str>) -> anyhow::Result<i32> {
 
     // Exec 1st pipeline
     let pl = pipelines.remove(0);
-    let mut exit_code = run_pipeline(&pl, &a.fds, &a.envs, &a.working_directory, 
-        a.force_overwrite, &a.tempdir_placeholder, file_write_timeout)?;
-    if ! a.keep_going && exit_code != 0 {
+    let mut exit_code = run_pipeline(
+        &pl,
+        &a.fds,
+        &a.envs,
+        &a.working_directory,
+        a.force_overwrite,
+        &a.tempdir_placeholder,
+        file_write_timeout,
+    )?;
+    if !a.keep_going && exit_code != 0 {
         return Ok(exit_code);
     }
 
@@ -521,13 +577,27 @@ pub fn main_argv(argv: &Vec<&str>) -> anyhow::Result<i32> {
         let cmd_is_oo = !pl0.is_empty() && pl0[0] == "o-o";
         exit_code = if cmd_is_oo {
             let (sub_pl, sub_a) = reform_pipeline_for_2nd_or_later_oo_command_line(&pl, &a)?;
-            run_pipeline(&sub_pl, &sub_a.fds, &sub_a.envs, &sub_a.working_directory,
-                a.force_overwrite, &a.tempdir_placeholder, file_write_timeout)?
+            run_pipeline(
+                &sub_pl,
+                &sub_a.fds,
+                &sub_a.envs,
+                &sub_a.working_directory,
+                a.force_overwrite,
+                &a.tempdir_placeholder,
+                file_write_timeout,
+            )?
         } else {
-            run_pipeline(&pl, &a.fds, &a.envs, &a.working_directory,
-                a.force_overwrite, &a.tempdir_placeholder, file_write_timeout)?
+            run_pipeline(
+                &pl,
+                &a.fds,
+                &a.envs,
+                &a.working_directory,
+                a.force_overwrite,
+                &a.tempdir_placeholder,
+                file_write_timeout,
+            )?
         };
-        if ! a.keep_going && exit_code != 0 {
+        if !a.keep_going && exit_code != 0 {
             return Ok(exit_code);
         }
     }
